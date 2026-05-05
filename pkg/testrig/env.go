@@ -26,6 +26,15 @@ type envContext struct {
 	logger     *slog.Logger
 }
 
+// newEnvContext constructs an envContext. Pass `mu` from the owning Env so
+// reads on the live `properties` map synchronize with sibling-service
+// writes. For hook contexts where `properties` is a stable snapshot, the
+// mu argument is still passed (to satisfy the interface) but no concurrent
+// writer exists.
+func newEnvContext(properties Properties, mu *sync.RWMutex, logger *slog.Logger) *envContext {
+	return &envContext{properties: properties, mu: mu, logger: logger}
+}
+
 type envState int
 
 const (
@@ -434,7 +443,7 @@ func (e *Env) validateServiceNames() error {
 func (e *Env) startService(pCtx context.Context, svc Service) error {
 	run := e.run // run.signals/properties/started/discovery are stable until Stop replaces run.
 	svcLogger := ScopedLogger(e.logger, svc.Name())
-	svcEnvCtx := &envContext{properties: run.properties, mu: &e.mu, logger: svcLogger}
+	svcEnvCtx := newEnvContext(run.properties, &e.mu, svcLogger)
 
 	if err := e.waitForDependencies(pCtx, svc); err != nil {
 		return err
@@ -499,7 +508,7 @@ func (e *Env) runOnStartHooks(ctx context.Context) error {
 	propSnapshot := e.run.properties.snapshot()
 	e.mu.RUnlock()
 
-	envCtx := &envContext{properties: propSnapshot, mu: &e.mu, logger: e.logger}
+	envCtx := newEnvContext(propSnapshot, &e.mu, e.logger)
 	for _, hook := range e.hooks {
 		if err := hook.OnStart(ctx, envCtx); err != nil {
 			return fmt.Errorf("lifecycle hook OnStart failed: %w", err)
@@ -606,7 +615,7 @@ func (e *Env) runOnStopHooks(ctx context.Context, run *runState) error {
 	e.mu.RLock()
 	propSnapshot := run.properties.snapshot()
 	e.mu.RUnlock()
-	envCtx := &envContext{properties: propSnapshot, mu: &e.mu, logger: e.logger}
+	envCtx := newEnvContext(propSnapshot, &e.mu, e.logger)
 
 	var errs []error
 	for _, hook := range e.hooks {
