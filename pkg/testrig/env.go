@@ -26,6 +26,7 @@ const (
 	stateIdle envState = iota
 	stateStarting
 	stateRunning
+	stateStopping
 )
 
 func (c *envContext) Get(key string) (string, bool) {
@@ -74,19 +75,27 @@ func (c *envContext) Logger() *slog.Logger {
 // time; mutating an Env after construction (or concurrently with Start) is
 // a programmer error.
 type Env struct {
-	name       string
-	services   []Service
-	properties Properties
-	reused     map[string]bool
-	started    map[string]bool
-	mu         sync.RWMutex
-	// Channels to signal when a service has started
-	signals      map[string]chan struct{}
-	state        envState
-	discovery    DiscoveryProvider        // set by Start() from newDiscovery; used by Start/Stop
-	newDiscovery func() DiscoveryProvider // factory — default creates isolated MapStore per Start()
+	// Immutable after construction.
+	name         string
+	services     []Service
+	newDiscovery func() DiscoveryProvider // factory — default creates an isolated MapStore per Start()
 	logger       *slog.Logger
 	hooks        []LifecycleHook
+
+	// Mutable lifecycle state, guarded by mu.
+	mu    sync.RWMutex
+	state envState
+	run   *runState // non-nil iff state != stateIdle
+}
+
+// runState holds the per-Start mutable state of an Env. It is allocated in
+// prepareStart and released in Stop, so a single nil check (run == nil) tells
+// us whether the env is idle. Fields are accessed under Env.mu.
+type runState struct {
+	properties Properties
+	started    map[string]bool
+	signals    map[string]chan struct{}
+	discovery  DiscoveryProvider
 }
 
 // envConfig holds the result of applying Options before Env construction.
@@ -119,14 +128,10 @@ func New(opts ...Option) (*Env, error) {
 	return &Env{
 		name:         cfg.name,
 		services:     cfg.services,
-		properties:   make(Properties),
-		reused:       make(map[string]bool),
-		started:      make(map[string]bool),
-		signals:      make(map[string]chan struct{}),
-		state:        stateIdle,
 		newDiscovery: cfg.newDiscovery,
 		logger:       cfg.logger,
 		hooks:        cfg.hooks,
+		state:        stateIdle,
 	}, nil
 }
 
@@ -302,15 +307,15 @@ func (e *Env) Name() string {
 	return e.name
 }
 
-// Properties returns a copy of all properties in the environment.
+// Properties returns a copy of all properties in the environment, or an empty
+// map when the env is idle.
 func (e *Env) Properties() Properties {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	p := make(Properties)
-	for k, v := range e.properties {
-		p[k] = v
+	if e.run == nil {
+		return make(Properties)
 	}
-	return p
+	return e.run.properties.snapshot()
 }
 
 func (e *Env) Start(ctx context.Context) error {
@@ -340,7 +345,7 @@ func (e *Env) Start(ctx context.Context) error {
 }
 
 // prepareStart transitions the env to stateStarting under lock, validates
-// configuration, and resets ephemeral runtime state for the upcoming Start.
+// configuration, and allocates a fresh runState for the upcoming Start.
 // Returns an error (without changing state) if the env is not idle or if
 // service configuration is invalid.
 func (e *Env) prepareStart() error {
@@ -357,18 +362,19 @@ func (e *Env) prepareStart() error {
 		return err
 	}
 
-	e.state = stateStarting
-
 	// Create discovery from the factory so default envs get an isolated
 	// MapStore per Start() while explicitly-shared providers are reused.
-	e.discovery = e.newDiscovery()
-	e.properties = make(Properties)
-	e.reused = make(map[string]bool)
-	e.started = make(map[string]bool)
-	e.signals = make(map[string]chan struct{}, len(e.services))
-	for _, s := range e.services {
-		e.signals[s.Name()] = make(chan struct{})
+	run := &runState{
+		properties: make(Properties),
+		started:    make(map[string]bool, len(e.services)),
+		signals:    make(map[string]chan struct{}, len(e.services)),
+		discovery:  e.newDiscovery(),
 	}
+	for _, s := range e.services {
+		run.signals[s.Name()] = make(chan struct{})
+	}
+	e.run = run
+	e.state = stateStarting
 	return nil
 }
 
@@ -387,26 +393,26 @@ func (e *Env) validateServiceNames() error {
 // declared dependencies to start, try discovery/reuse, otherwise call its
 // Start, then publish properties. Closes the service's signal on completion.
 func (e *Env) startService(pCtx context.Context, svc Service) error {
+	run := e.run // run.signals/properties/started/discovery are stable until Stop replaces run.
 	svcLogger := ScopedLogger(e.logger, svc.Name())
-	svcEnvCtx := &envContext{properties: e.properties, mu: &e.mu, logger: svcLogger}
+	svcEnvCtx := &envContext{properties: run.properties, mu: &e.mu, logger: svcLogger}
 
 	if err := e.waitForDependencies(pCtx, svc); err != nil {
 		return err
 	}
 
-	discoveredProps, found, err := e.discovery.Discover(pCtx, svc)
+	discoveredProps, found, err := run.discovery.Discover(pCtx, svc)
 	if err != nil {
 		return fmt.Errorf("discovery failed for service %s: %w", svc.Name(), err)
 	}
 	if found {
 		svcLogger.Info("♻️  Reusing service", "name", svc.Name())
 		e.mu.Lock()
-		e.reused[svc.Identifier()] = true
 		for k, v := range discoveredProps {
-			e.properties[k] = v
+			run.properties[k] = v
 		}
 		e.mu.Unlock()
-		close(e.signals[svc.Name()])
+		close(run.signals[svc.Name()])
 		return nil
 	}
 
@@ -416,17 +422,17 @@ func (e *Env) startService(pCtx context.Context, svc Service) error {
 	}
 
 	e.mu.Lock()
-	e.started[svc.Name()] = true
+	run.started[svc.Name()] = true
 	for k, v := range props {
-		e.properties[k] = v
+		run.properties[k] = v
 	}
 	e.mu.Unlock()
 
-	if err := e.discovery.Publish(pCtx, svc, props.snapshot()); err != nil {
+	if err := run.discovery.Publish(pCtx, svc, props.snapshot()); err != nil {
 		return fmt.Errorf("failed to publish service %s: %w", svc.Name(), err)
 	}
 
-	close(e.signals[svc.Name()])
+	close(run.signals[svc.Name()])
 	return nil
 }
 
@@ -435,9 +441,10 @@ func (e *Env) startService(pCtx context.Context, svc Service) error {
 // guaranteed by dag.Validate in prepareStart, so a missing entry here is a
 // programmer error (not user input).
 func (e *Env) waitForDependencies(pCtx context.Context, svc Service) error {
+	signals := e.run.signals
 	for _, depName := range svc.Dependencies() {
 		select {
-		case <-e.signals[depName]:
+		case <-signals[depName]:
 		case <-pCtx.Done():
 			return pCtx.Err()
 		}
@@ -447,10 +454,10 @@ func (e *Env) waitForDependencies(pCtx context.Context, svc Service) error {
 
 // runOnStartHooks invokes all registered LifecycleHook.OnStart callbacks with
 // a stable property snapshot taken after all services started. The snapshot
-// shields hooks from any later property mutations (notably, the clear in Stop).
+// shields hooks from any later property mutations (notably, the reset in Stop).
 func (e *Env) runOnStartHooks(ctx context.Context) error {
 	e.mu.RLock()
-	propSnapshot := e.properties.snapshot()
+	propSnapshot := e.run.properties.snapshot()
 	e.mu.RUnlock()
 
 	envCtx := &envContext{properties: propSnapshot, mu: &e.mu, logger: e.logger}
@@ -462,97 +469,113 @@ func (e *Env) runOnStartHooks(ctx context.Context) error {
 	return nil
 }
 
+// Stop tears down all services this env started, in reverse-dependency order,
+// and invokes registered OnStop hooks. Idempotent: a second concurrent or
+// sequential call after the first completes is a no-op. Reused services are
+// not stopped (this env did not start them).
 func (e *Env) Stop(ctx context.Context) error {
-	e.mu.Lock()
-	if e.state != stateRunning && e.state != stateStarting && len(e.started) == 0 {
-		e.mu.Unlock()
-		return nil // Already stopped or idle with no started services
+	run, ok := e.beginStop()
+	if !ok {
+		return nil
 	}
-	e.mu.Unlock()
 
-	// Invert dependencies to find what depends on what
-	dependents := make(map[string][]string)
+	stopErr := e.stopServices(ctx, run)
+	hookErr := e.runOnStopHooks(ctx, run)
+
+	e.finishStop()
+	return errors.Join(stopErr, hookErr)
+}
+
+// beginStop atomically transitions out of running/starting into stopping,
+// returning the runState to tear down. Returns ok=false if the env is idle
+// or another goroutine is already stopping it — making Stop idempotent under
+// concurrent callers.
+func (e *Env) beginStop() (*runState, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state != stateRunning && e.state != stateStarting {
+		return nil, false
+	}
+	e.state = stateStopping
+	return e.run, true
+}
+
+// finishStop releases the runState and returns to stateIdle. Must be called
+// exactly once per beginStop.
+func (e *Env) finishStop() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.run = nil
+	e.state = stateIdle
+}
+
+// stopServices fans out per-service stop goroutines, with each waiting for
+// its dependents to stop first. Reused services are not stopped — this env
+// did not start them, so they are filtered out entirely.
+func (e *Env) stopServices(ctx context.Context, run *runState) error {
+	toStop := make([]Service, 0, len(e.services))
 	for _, s := range e.services {
-		for _, dep := range s.Dependencies() {
-			dependents[dep] = append(dependents[dep], s.Name())
+		if run.started[s.Name()] {
+			toStop = append(toStop, s)
 		}
 	}
 
-	stopSignals := make(map[string]chan struct{})
-	for _, s := range e.services {
+	dependents := make(map[string][]string, len(toStop))
+	stopSignals := make(map[string]chan struct{}, len(toStop))
+	for _, s := range toStop {
 		stopSignals[s.Name()] = make(chan struct{})
+	}
+	for _, s := range toStop {
+		for _, dep := range s.Dependencies() {
+			if _, ok := stopSignals[dep]; ok {
+				dependents[dep] = append(dependents[dep], s.Name())
+			}
+		}
 	}
 
 	g, pCtx := errgroup.WithContext(ctx)
-	for _, s := range e.services {
+	for _, s := range toStop {
 		svc := s
 		g.Go(func() error {
 			defer close(stopSignals[svc.Name()])
-
-			// 1. Wait for all services that depend on this one to stop first
 			for _, depName := range dependents[svc.Name()] {
-				sig, ok := stopSignals[depName]
-				if !ok {
-					continue
-				}
 				select {
-				case <-sig:
-					// Dependent stopped
+				case <-stopSignals[depName]:
 				case <-pCtx.Done():
 					return pCtx.Err()
 				}
 			}
-
-			// 2. Stop this service if it was started (not reused)
-			e.mu.Lock()
-			wasStarted := e.started[svc.Name()]
-			e.mu.Unlock()
-
-			if wasStarted {
-				if err := svc.Stop(pCtx); err != nil {
-					return fmt.Errorf("failed to stop service %s: %w", svc.Name(), err)
-				}
-				e.mu.Lock()
-				delete(e.started, svc.Name())
-				e.mu.Unlock()
-				// Task 1.3 — Unpublish: remove from discovery so the stopped service isn't reused.
-				if err := e.discovery.Unpublish(pCtx, svc); err != nil {
-					return fmt.Errorf("failed to unpublish service %s: %w", svc.Name(), err)
-				}
+			if err := svc.Stop(pCtx); err != nil {
+				return fmt.Errorf("failed to stop service %s: %w", svc.Name(), err)
 			}
-
+			if err := run.discovery.Unpublish(pCtx, svc); err != nil {
+				return fmt.Errorf("failed to unpublish service %s: %w", svc.Name(), err)
+			}
 			return nil
 		})
 	}
+	return g.Wait()
+}
 
-	err := g.Wait()
+// runOnStopHooks invokes all OnStop callbacks against a stable property
+// snapshot, joining any returned errors. Hooks always run, even if a previous
+// hook failed, to give cleanup-style hooks a chance to run.
+func (e *Env) runOnStopHooks(ctx context.Context, run *runState) error {
+	if len(e.hooks) == 0 {
+		return nil
+	}
+	e.mu.RLock()
+	propSnapshot := run.properties.snapshot()
+	e.mu.RUnlock()
+	envCtx := &envContext{properties: propSnapshot, mu: &e.mu, logger: e.logger}
 
-	if len(e.hooks) > 0 {
-		// Snapshot properties before clearing them, so OnStop hooks see a stable
-		// immutable view of the properties that were active during the run.
-		e.mu.RLock()
-		propSnapshot := e.properties.snapshot()
-		e.mu.RUnlock()
-		envCtx := &envContext{properties: propSnapshot, mu: &e.mu, logger: e.logger}
-		for _, hook := range e.hooks {
-			if pmErr := hook.OnStop(ctx, envCtx); pmErr != nil {
-				if err == nil {
-					err = fmt.Errorf("lifecycle hook OnStop failed: %w", pmErr)
-				} else {
-					e.logger.Error("lifecycle hook OnStop failed", "error", pmErr)
-				}
-			}
+	var errs []error
+	for _, hook := range e.hooks {
+		if err := hook.OnStop(ctx, envCtx); err != nil {
+			errs = append(errs, fmt.Errorf("lifecycle hook OnStop failed: %w", err))
 		}
 	}
-
-	e.mu.Lock()
-	e.state = stateIdle
-	e.properties = make(Properties)
-	e.reused = make(map[string]bool)
-	e.started = make(map[string]bool)
-	e.mu.Unlock()
-
-	return err
+	return errors.Join(errs...)
 }
 
 func (e *Env) validateDependencies() error {

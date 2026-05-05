@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -585,15 +586,13 @@ func TestEnv_Stop_MultipleHooksError(t *testing.T) {
 	s1 := &MockService{name: "svc1"}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	h1Err := errors.New("err1")
+	h2Err := errors.New("err2")
 	h1 := &MockLifecycleHook{
-		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
-			return errors.New("err1")
-		},
+		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error { return h1Err },
 	}
 	h2 := &MockLifecycleHook{
-		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
-			return errors.New("err2")
-		},
+		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error { return h2Err },
 	}
 
 	env := testrig.MustNew(testrig.With(s1), testrig.WithHooks(h1, h2), testrig.WithLogger(logger))
@@ -604,9 +603,76 @@ func TestEnv_Stop_MultipleHooksError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
-	// First error should be returned, second logged.
-	if !strings.Contains(err.Error(), "err1") {
-		t.Errorf("Expected error containing 'err1', got %v", err)
+	// Both hook errors must be reported via errors.Join.
+	if !errors.Is(err, h1Err) {
+		t.Errorf("Expected returned error to wrap h1Err via errors.Is, got %v", err)
+	}
+	if !errors.Is(err, h2Err) {
+		t.Errorf("Expected returned error to wrap h2Err via errors.Is, got %v", err)
+	}
+}
+
+func TestEnv_Stop_DoesNotStopReusedServices(t *testing.T) {
+	var stopCount int32
+	svc := &MockService{
+		name:       "reused",
+		properties: testrig.Properties{"k": "v"},
+		onStop:     func() { atomic.AddInt32(&stopCount, 1) },
+	}
+
+	sharedDiscovery := testrig.NewDiscovery(testrig.NewMapStore())
+	owner := testrig.MustNew(testrig.With(svc), testrig.WithDiscovery(sharedDiscovery))
+	if err := owner.Start(context.Background()); err != nil {
+		t.Fatalf("owner Start failed: %v", err)
+	}
+	defer func() { _ = owner.Stop(context.Background()) }()
+
+	reuser := testrig.MustNew(testrig.With(svc), testrig.WithDiscovery(sharedDiscovery))
+	if err := reuser.Start(context.Background()); err != nil {
+		t.Fatalf("reuser Start failed: %v", err)
+	}
+	if err := reuser.Stop(context.Background()); err != nil {
+		t.Fatalf("reuser Stop failed: %v", err)
+	}
+
+	// reuser stopped — but svc was reused, not started by reuser, so its
+	// Stop must not have been called.
+	if got := atomic.LoadInt32(&stopCount); got != 0 {
+		t.Errorf("svc.Stop called %d times by reuser; expected 0 (reused services are not stopped)", got)
+	}
+}
+
+func TestEnv_Stop_ConcurrentCallsAreIdempotent(t *testing.T) {
+	var stopCount, hookStopCount int32
+	svc := &MockService{name: "svc1", onStop: func() { atomic.AddInt32(&stopCount, 1) }}
+	hook := &MockLifecycleHook{
+		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
+			atomic.AddInt32(&hookStopCount, 1)
+			return nil
+		},
+	}
+
+	env := testrig.MustNew(testrig.With(svc), testrig.WithHooks(hook))
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	const goroutines = 20
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			_ = env.Stop(context.Background())
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&stopCount); got != 1 {
+		t.Errorf("svc.Stop called %d times under concurrent Stop; expected exactly 1", got)
+	}
+	if got := atomic.LoadInt32(&hookStopCount); got != 1 {
+		t.Errorf("OnStop hook called %d times under concurrent Stop; expected exactly 1", got)
 	}
 }
 
