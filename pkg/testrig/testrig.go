@@ -91,14 +91,6 @@ type DiscoveryProvider interface {
 	Unpublish(ctx context.Context, svc Service) error
 }
 
-// scopedLogger returns a child logger with the given service name attribute.
-// Used internally to scope per-service loggers; users get this scoped logger
-// via EnvContext.Logger() and can compose further attributes through slog
-// directly.
-func scopedLogger(parent *slog.Logger, name string) *slog.Logger {
-	return parent.With("service", name)
-}
-
 // LifecycleHook is an interface that handles properties after successful service start.
 // It can optionally be supplied to the Env and will be called after the environment
 // has started and before it is stopped.

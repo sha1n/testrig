@@ -2,101 +2,14 @@ package testrig
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"sync"
-	"time"
 
 	"github.com/sha1n/testrig-go/internal/dag"
 	"golang.org/x/sync/errgroup"
 )
-
-// envContext is the EnvContext implementation passed to Service.Start and
-// LifecycleHook callbacks. It borrows the parent Env's RWMutex via pointer
-// so reads on `properties` synchronize with concurrent writes by sibling
-// services; the zero value of sync.RWMutex on a value field would not share
-// state. Hook envContexts are constructed over a snapshot map and so are
-// effectively immutable.
-type envContext struct {
-	properties Properties
-	mu         *sync.RWMutex
-	logger     *slog.Logger
-}
-
-// newEnvContext constructs an envContext. Pass `mu` from the owning Env so
-// reads on the live `properties` map synchronize with sibling-service
-// writes. For hook contexts where `properties` is a stable snapshot, the
-// mu argument is still passed (to satisfy the interface) but no concurrent
-// writer exists.
-func newEnvContext(properties Properties, mu *sync.RWMutex, logger *slog.Logger) *envContext {
-	return &envContext{properties: properties, mu: mu, logger: logger}
-}
-
-type envState int
-
-const (
-	stateIdle envState = iota
-	stateStarting
-	stateRunning
-	stateStopping
-)
-
-func (s envState) String() string {
-	switch s {
-	case stateIdle:
-		return "idle"
-	case stateStarting:
-		return "starting"
-	case stateRunning:
-		return "running"
-	case stateStopping:
-		return "stopping"
-	default:
-		return fmt.Sprintf("envState(%d)", int(s))
-	}
-}
-
-func (c *envContext) Get(key string) (string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	val, ok := c.properties[key]
-	return val, ok
-}
-
-func (c *envContext) Int(key string) (int, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.properties.Int(key)
-}
-
-func (c *envContext) Bool(key string) (bool, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.properties.Bool(key)
-}
-
-func (c *envContext) Duration(key string) (time.Duration, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.properties.Duration(key)
-}
-
-func (c *envContext) Properties() Properties {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	p := make(Properties)
-	for k, v := range c.properties {
-		p[k] = v
-	}
-	return p
-}
-
-func (c *envContext) Logger() *slog.Logger {
-	return c.logger
-}
 
 // Env manages a set of Service implementations, handling their lifecycle,
 // dependency resolution, and property propagation.
@@ -128,209 +41,36 @@ type runState struct {
 	discovery  DiscoveryProvider
 }
 
-// envConfig holds the result of applying Options before Env construction.
-type envConfig struct {
-	name         string
-	services     []Service
-	newDiscovery func() DiscoveryProvider
-	logger       *slog.Logger
-	hooks        []LifecycleHook
-}
+type envState int
 
-// Option configures an Env at construction time. Options are applied in order
-// by New; an option may return an error to reject invalid input.
-type Option func(*envConfig) error
+const (
+	stateIdle envState = iota
+	stateStarting
+	stateRunning
+	stateStopping
+)
 
-// New creates a new Env with isolation-safe defaults (in-process MapStore for
-// discovery, slog.Default() logger), then applies the given options. Returns
-// an error if any option rejects its input.
-func New(opts ...Option) (*Env, error) {
-	cfg := envConfig{
-		name:         "testenv",
-		newDiscovery: func() DiscoveryProvider { return NewDiscovery(NewMapStore()) },
-		logger:       slog.Default(),
-	}
-	for _, opt := range opts {
-		if err := opt(&cfg); err != nil {
-			return nil, err
-		}
-	}
-	return &Env{
-		name:         cfg.name,
-		services:     cfg.services,
-		newDiscovery: cfg.newDiscovery,
-		logger:       cfg.logger,
-		hooks:        cfg.hooks,
-		state:        stateIdle,
-	}, nil
-}
-
-// MustNew is like New but panics on error. Convenient for tests and other
-// places where invalid configuration is a static, programmer-checked condition.
-func MustNew(opts ...Option) *Env {
-	env, err := New(opts...)
-	if err != nil {
-		panic(err)
-	}
-	return env
-}
-
-// WithName sets a custom name for the environment, used in logs and error
-// messages. Returns an error if name is empty.
-func WithName(name string) Option {
-	return func(c *envConfig) error {
-		if name == "" {
-			return fmt.Errorf("testrig: WithName requires a non-empty name")
-		}
-		c.name = name
-		return nil
+func (s envState) String() string {
+	switch s {
+	case stateIdle:
+		return "idle"
+	case stateStarting:
+		return "starting"
+	case stateRunning:
+		return "running"
+	case stateStopping:
+		return "stopping"
+	default:
+		return fmt.Sprintf("envState(%d)", int(s))
 	}
 }
 
-// WithDiscovery replaces the discovery provider. The same provider is reused
-// across every Start of this Env — that is the point of supplying one
-// explicitly, since cross-process and cross-env reuse rely on a stable
-// underlying store.
-//
-// Contrast with the default: New() without WithDiscovery installs a factory
-// that produces a fresh in-process MapStore per Start, so independent envs
-// are isolated by construction.
-//
-// Returns an error if d is nil.
-func WithDiscovery(d DiscoveryProvider) Option {
-	return func(c *envConfig) error {
-		if d == nil {
-			return fmt.Errorf("testrig: WithDiscovery requires a non-nil DiscoveryProvider")
-		}
-		c.newDiscovery = func() DiscoveryProvider { return d }
-		return nil
-	}
-}
-
-// WithLogger replaces the logger for the environment. Returns an error if
-// logger is nil.
-func WithLogger(logger *slog.Logger) Option {
-	return func(c *envConfig) error {
-		if logger == nil {
-			return fmt.Errorf("testrig: WithLogger requires a non-nil *slog.Logger")
-		}
-		c.logger = logger
-		return nil
-	}
-}
-
-// WithHooks appends lifecycle hooks (accumulative across calls). Returns an
-// error if any hook is nil.
-func WithHooks(hooks ...LifecycleHook) Option {
-	return func(c *envConfig) error {
-		for i, h := range hooks {
-			if h == nil {
-				return fmt.Errorf("testrig: WithHooks received a nil LifecycleHook at index %d", i)
-			}
-		}
-		c.hooks = append(c.hooks, hooks...)
-		return nil
-	}
-}
-
-// With appends services (accumulative across calls). Returns an error if any
-// service is nil.
-func With(services ...Service) Option {
-	return func(c *envConfig) error {
-		for i, s := range services {
-			if s == nil {
-				return fmt.Errorf("testrig: With received a nil Service at index %d", i)
-			}
-		}
-		c.services = append(c.services, services...)
-		return nil
-	}
-}
-
-// envDiscovery is a DiscoveryProvider backed by a DiscoveryStore.
-// Use NewDiscovery or NewCrossProcessDiscovery to create instances.
-type envDiscovery struct {
-	store DiscoveryStore
-}
-
-// NewDiscovery creates a DiscoveryProvider backed by the given store.
-// Returns a DiscoveryProvider; the concrete type is an implementation detail.
-// Panics if store is nil.
-func NewDiscovery(store DiscoveryStore) DiscoveryProvider {
-	if store == nil {
-		panic("testrig: NewDiscovery requires a non-nil DiscoveryStore")
-	}
-	return &envDiscovery{store: store}
-}
-
-// NewCrossProcessDiscovery creates a DiscoveryProvider backed by OS environment
-// variables, suitable for cross-process service reuse.
-func NewCrossProcessDiscovery() DiscoveryProvider {
-	return NewDiscovery(NewOsEnvStore())
-}
-
-func (d *envDiscovery) Discover(ctx context.Context, svc Service) (Properties, bool, error) {
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	val, ok := d.store.Load(key)
-	if !ok || val == "" {
-		return nil, false, nil
-	}
-
-	props := make(Properties)
-	if err := json.Unmarshal([]byte(val), &props); err != nil {
-		// If it's not JSON, it might be the old "active" marker.
-		// Return empty properties but indicate it was found.
-		return make(Properties), true, nil
-	}
-
-	// Liveness check: verify the discovered service is actually running.
-	// Known limitation: uses a hardcoded 2s timeout, not the caller's context deadline.
-	// Callers who need fast cancellation should cancel the parent Start() context,
-	// which short-circuits at the dependency-wait level.
-	if !livenessCheck(props, svc.Name()) {
-		return nil, false, nil
-	}
-
-	return props, true, nil
-}
-
-// livenessCheck attempts a TCP dial to verify the discovered service is actually running.
-// It uses the well-known "<svcName>.host" and "<svcName>.port" property keys.
-// If those keys are not present, the check is skipped (backwards-compatible).
-func livenessCheck(props Properties, svcName string) bool {
-	host, hasHost := props[svcName+".host"]
-	port, hasPort := props[svcName+".port"]
-	if !hasHost || !hasPort {
-		return true // No address to check; assume alive.
-	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 2*time.Second)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
-}
-
-func (d *envDiscovery) Publish(ctx context.Context, svc Service, props Properties) error {
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	data, err := json.Marshal(props)
-	if err != nil {
-		return fmt.Errorf("failed to marshal properties: %w", err)
-	}
-	if err := d.store.Store(key, string(data)); err != nil {
-		return fmt.Errorf("failed to store discovery data for %s: %w", svc.Name(), err)
-	}
-	return nil
-}
-
-// Unpublish removes the service from the discovery registry.
-// Called after a service is explicitly stopped to prevent dead-reuse.
-func (d *envDiscovery) Unpublish(ctx context.Context, svc Service) error {
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	if err := d.store.Delete(key); err != nil {
-		return fmt.Errorf("failed to delete discovery data for %s: %w", svc.Name(), err)
-	}
-	return nil
+// scopedLogger returns a child logger with the given service name attribute.
+// Used internally to scope per-service loggers; users get this scoped logger
+// via EnvContext.Logger() and can compose further attributes through slog
+// directly.
+func scopedLogger(parent *slog.Logger, name string) *slog.Logger {
+	return parent.With("service", name)
 }
 
 func (e *Env) Name() string {
@@ -407,20 +147,6 @@ func (e *Env) prepareStart() error {
 	}
 	e.run = run
 	e.state = stateStarting
-	return nil
-}
-
-// validateServiceNames returns an error if any two services share a Name,
-// since Name is the addressable handle used in dependency edges and the
-// runState signals map.
-func validateServiceNames(services []Service) error {
-	seen := make(map[string]bool, len(services))
-	for _, s := range services {
-		if seen[s.Name()] {
-			return fmt.Errorf("duplicate service name: %s", s.Name())
-		}
-		seen[s.Name()] = true
-	}
 	return nil
 }
 
@@ -620,6 +346,20 @@ func (e *Env) runOnStopHooks(ctx context.Context, run *runState) error {
 	return errors.Join(errs...)
 }
 
+// validateServiceNames returns an error if any two services share a Name,
+// since Name is the addressable handle used in dependency edges and the
+// runState signals map.
+func validateServiceNames(services []Service) error {
+	seen := make(map[string]bool, len(services))
+	for _, s := range services {
+		if seen[s.Name()] {
+			return fmt.Errorf("duplicate service name: %s", s.Name())
+		}
+		seen[s.Name()] = true
+	}
+	return nil
+}
+
 // validateDependencies wraps the generic DAG check so error messages speak
 // in service vocabulary rather than node vocabulary.
 func validateDependencies(services []Service) error {
@@ -638,6 +378,8 @@ func validateDependencies(services []Service) error {
 	return nil
 }
 
+// serviceNode adapts Service to dag.Node so dependency validation can run
+// against the generic DAG package without it knowing about services.
 type serviceNode struct {
 	Service
 }
