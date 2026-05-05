@@ -91,9 +91,11 @@ type DiscoveryProvider interface {
 	Unpublish(ctx context.Context, svc Service) error
 }
 
-// ScopedLogger returns a child logger with the given service name attribute.
-// Use this inside Service.Start implementations to get a per-service scoped logger.
-func ScopedLogger(parent *slog.Logger, name string) *slog.Logger {
+// scopedLogger returns a child logger with the given service name attribute.
+// Used internally to scope per-service loggers; users get this scoped logger
+// via EnvContext.Logger() and can compose further attributes through slog
+// directly.
+func scopedLogger(parent *slog.Logger, name string) *slog.Logger {
 	return parent.With("service", name)
 }
 

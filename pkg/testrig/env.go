@@ -442,7 +442,7 @@ func (e *Env) validateServiceNames() error {
 // strong invariant rather than just "this goroutine exited".
 func (e *Env) startService(pCtx context.Context, svc Service) error {
 	run := e.run // run.signals/properties/started/discovery are stable until Stop replaces run.
-	svcLogger := ScopedLogger(e.logger, svc.Name())
+	svcLogger := scopedLogger(e.logger, svc.Name())
 	svcEnvCtx := newEnvContext(run.properties, &e.mu, svcLogger)
 
 	if err := e.waitForDependencies(pCtx, svc); err != nil {

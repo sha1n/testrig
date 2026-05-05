@@ -1,7 +1,6 @@
 package testrig_test
 
 import (
-	"log/slog"
 	"testing"
 	"time"
 
@@ -50,14 +49,3 @@ func TestProperties_TypeSafeHelpers(t *testing.T) {
 	}
 }
 
-func TestScopedLogger(t *testing.T) {
-	parent := slog.Default()
-	scoped := testrig.ScopedLogger(parent, "my-service")
-	if scoped == nil {
-		t.Error("ScopedLogger returned nil")
-	}
-	// Verify it's a different logger than the parent.
-	if scoped == parent {
-		t.Error("ScopedLogger should return a new logger, not the same instance")
-	}
-}
