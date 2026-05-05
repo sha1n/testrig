@@ -9,7 +9,7 @@ This document tracks feature delivery for the initial build-up of `testrig-go`. 
 - [x] **feat: add `internal/dag` for dependency graph validation** — cycle detection used by `Env`.
 - [x] **feat: add core types (`Service`, `Properties`, `TestEnvContext`)** — interface layer with no runtime; `pkg/testrig/testrig.go`.
 - [x] **feat: add `DiscoveryStore` (`MapStore`, `OsEnvStore`)** — pluggable storage backends for discovery (lands before Env so the latter compiles).
-- [ ] **feat: add `Env` with reactive Start/Stop lifecycle** — concurrent dependency-aware orchestration; envDiscovery providers; `internal/testutil` for shared test helpers.
+- [x] **feat: add `Env` with reactive Start/Stop lifecycle** — concurrent dependency-aware orchestration; envDiscovery providers; `internal/testutil` for shared test helpers.
 - [ ] **feat: add `InjectIntoEnv` helper** — `t.Setenv`-based property → env-var injection.
 - [ ] **feat: add postgres testkit** — testcontainers-go PostgreSQL service + helper.
 - [ ] **feat: add wiremock testkit** — testcontainers-go WireMock service + helper.
