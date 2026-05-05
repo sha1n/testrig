@@ -3,12 +3,22 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/v2"
+)
+
+// Indirected for tests so main can be exercised end-to-end without binding a
+// fixed port, blocking forever, or terminating the test process.
+var (
+	listenAndServe = http.Serve
+	listen         = net.Listen
+	exit           = os.Exit
 )
 
 type Config struct {
@@ -53,20 +63,36 @@ func LoadConfig(overrides map[string]string) (*Config, error) {
 	return &cfg, nil
 }
 
-func main() {
-	cfg, err := LoadConfig(nil)
-	if err != nil {
-		log.Fatalf("Config error: %v", err)
-	}
-
+// newHandler returns the HTTP handler the example serves. Extracted so tests
+// can exercise it without binding a real port.
+func newHandler(cfg *Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK - " + cfg.DatabaseURL))
 	})
-
-	log.Printf("Starting server on port %d...", cfg.AppPort)
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.AppPort), mux); err != nil {
-		log.Fatal(err)
-	}
+	return mux
 }
+
+// run encapsulates the bootstrap so main is a thin shim and tests can drive
+// the full path with overridden listen/serve/exit hooks.
+func run() int {
+	cfg, err := LoadConfig(nil)
+	if err != nil {
+		log.Printf("Config error: %v", err)
+		return 1
+	}
+	ln, err := listen("tcp", fmt.Sprintf(":%d", cfg.AppPort))
+	if err != nil {
+		log.Printf("listen error: %v", err)
+		return 1
+	}
+	log.Printf("Starting server on port %d...", cfg.AppPort)
+	if err := listenAndServe(ln, newHandler(cfg)); err != nil && err != http.ErrServerClosed {
+		log.Printf("serve error: %v", err)
+		return 1
+	}
+	return 0
+}
+
+func main() { exit(run()) }

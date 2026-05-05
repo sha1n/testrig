@@ -1,35 +1,35 @@
-# testrig-go — Specification
+# testrig — Specification
 
-This document describes the public API and runtime semantics of `testrig-go` in its target state. It is intended for users of the framework and contributors who need to reason about behaviour without diving into the implementation.
+This document describes the public API and runtime semantics of `testrig` in its target state. It is intended for users of the framework and contributors who need to reason about behaviour without diving into the implementation.
 
 ## Purpose
 
-`testrig-go` is a Go library for building and managing multi-service test environments. It orchestrates service lifecycles with dependency awareness, propagates configuration between services as they come up, and supports cross-process service reuse so the same containerised dependencies can be shared across `go test` packages.
+`testrig` is a Go library for building and managing multi-service test environments. It orchestrates service lifecycles with dependency awareness, propagates configuration between services as they come up, and supports cross-env service reuse so the same containerised dependencies can be shared across independent `testrig.Env` instances within a process (and, with the OS-env-backed provider, across child processes spawned from the test).
 
 The framework is designed for integration tests that need real services (databases, mocks, etc.) rather than for unit tests.
 
 ## Module
 
-- Module path: `github.com/sha1n/testrig-go`
-- Go version: `1.26`
+- Module path: `github.com/sha1n/testrig`
+- Go version: `1.24`
 - License: TBD (added separately)
 
 ## Project Layout
 
 ```
-pkg/testrig/                — core framework (Env, Service, DiscoveryStore, SetEnvVars)
-pkg/testrig/testkits/       — pre-configured Testkits (each implements testrig.Service)
-  ├── postgres/             — PostgreSQL Testkit
-  └── wiremock/             — WireMock Testkit
-internal/dag/               — directed-acyclic-graph cycle validation
-internal/testutil/          — shared test helpers (e.g. MockEnvContext)
-examples/                   — runnable integration examples
-  ├── viper-app/            — Viper config-injection example
-  └── koanf-app/            — koanf config-injection example
-docs/                       — specs and plans
+.                         — core framework (Env, Service, DiscoveryStore, SetEnvVars)
+services/                 — pre-configured services (each implements testrig.Service)
+  ├── postgres/           — PostgreSQL service
+  └── wiremock/           — WireMock service
+internal/dag/             — directed-acyclic-graph cycle validation
+internal/testutil/        — shared test helpers (e.g. MockEnvContext)
+examples/                 — runnable integration examples
+  ├── viper-app/          — Viper config-injection example
+  └── koanf-app/          — koanf config-injection example
+docs/                     — specs and plans
 ```
 
-> **Layout invariant:** every package a user imports lives under `pkg/testrig/...`. There is one branded import root.
+> **Layout invariant:** the framework's public API lives in the module root package `testrig`. Pre-built services live under `services/<name>/` and each implements `testrig.Service`.
 
 ## Core Concepts
 
@@ -60,8 +60,8 @@ type Service interface {
 
 A `Service` is a stateful dependency with a lifecycle. The framework calls `Start` once all dependencies are running, and `Stop` once all dependents have stopped.
 
-- `Name()` — unique within the environment; used in logs, dependency wiring, and stop-order coordination.
-- `Identifier()` — content-addressable string; identical configurations across processes produce identical identifiers, enabling cross-process reuse.
+- `Name()` — unique within the environment; used in logs, dependency wiring, and stop-order coordination. **Per-env scope.**
+- `Identifier()` — content-addressable string; identical configurations across processes produce identical identifiers, enabling cross-env and cross-process reuse via discovery. **Global scope.** It is conventional but not required to keep `Identifier` independent of `Name` so two differently-named instances of the same configuration can share a backing container.
 - `Dependencies()` — names of services that must be running before this one starts. Cycles are rejected at `Env.Start()`.
 - `Start` returns the properties this service contributes to the shared `Properties` map.
 - `Stop` is only called for services this `Env` actually started (not for reused services).
@@ -89,7 +89,7 @@ The orchestrator. Constructed via `New(opts ...Option) (*Env, error)` (or `MustN
 env, err := testrig.New(
     testrig.WithName("integration-tests"),
     testrig.WithLogger(myLogger),
-    testrig.WithDiscovery(testrig.NewCrossProcessDiscovery()),
+    testrig.WithDiscovery(testrig.NewOsEnvDiscovery()),
     testrig.WithHooks(myHook),
     testrig.With(svc1, svc2, svc3),
 )
@@ -137,7 +137,17 @@ Calling `Start` from `stateStarting` or `stateRunning` returns an error. Calling
 
 ### Discovery
 
-Discovery enables cross-process service reuse: if a service with the same `Identifier()` was already published by another process and is still alive, this `Env` reuses its properties instead of starting a new container.
+Discovery enables service reuse: if a service with the same `Identifier()` was already published to the configured store and is still alive, this `Env` reuses its properties instead of starting a new container.
+
+The scope of "already published" depends on the discovery provider:
+
+| Provider | Scope | Use case |
+|---|---|---|
+| `NewDiscovery(NewMapStore())` (default) | This `Env` only — the default factory creates a fresh store per `Start()`. | Test isolation. |
+| `NewDiscovery(<shared store>)` | All envs in the current process that share the store. | Multiple `Env` instances reusing the same backing services within one test binary. |
+| `NewOsEnvDiscovery()` | This process and any child processes spawned afterward. | Test that spawns a subprocess (e.g. CLI under test) which needs to discover services started by the test. |
+
+> **Not supported:** sharing services across sibling processes — e.g. between the per-package binaries that `go test ./...` runs. The OS-env-backed provider relies on env-var inheritance (parent → child), which does not propagate to siblings.
 
 #### `DiscoveryProvider`
 
@@ -151,15 +161,13 @@ type DiscoveryProvider interface {
 
 Two factories provided:
 - `NewDiscovery(store DiscoveryStore) DiscoveryProvider` — backed by any `DiscoveryStore`.
-- `NewCrossProcessDiscovery() DiscoveryProvider` — convenience: `NewDiscovery(NewOsEnvStore())`.
+- `NewOsEnvDiscovery() DiscoveryProvider` — convenience: `NewDiscovery(NewOsEnvStore())`.
 
 Discovery key prefix: `TESTRIG_SERVICE_<Identifier>`.
 
 #### Liveness check
 
-After loading a published entry, discovery performs a TCP-dial liveness check using well-known property keys `<svcName>.host` and `<svcName>.port` (2-second timeout). If those keys are not present, the check is skipped and reuse proceeds. If the dial fails, the entry is treated as stale and the service is started fresh.
-
-> Known limitation: the liveness check uses a hardcoded 2 s timeout, not the caller's context deadline. Cancel the parent `Start` context to short-circuit at the dependency-wait level.
+After loading a published entry, discovery performs a TCP-dial liveness check using well-known property keys `<svcName>.host` and `<svcName>.port`. The dial respects the caller's context, capped at 2 s so an unbounded ctx cannot stall discovery on a slow-failing host. If those keys are not present, the check is skipped and reuse proceeds. If the dial fails (or the ctx is already expired), the entry is treated as not live and the service is started fresh.
 
 #### `DiscoveryStore`
 
@@ -176,9 +184,9 @@ Two implementations provided:
 | Constructor | Backing | Use case |
 |---|---|---|
 | `NewMapStore()` | In-process map (sync-safe). | Default. Test isolation; each `Env` gets its own store on every `Start()`. No OS env mutation. |
-| `NewOsEnvStore()` | OS environment variables (`os.Setenv`/`Getenv`/`Unsetenv`). | Opt-in via `NewCrossProcessDiscovery()`. Visible to child processes. |
+| `NewOsEnvStore()` | OS environment variables (`os.Setenv`/`Getenv`/`Unsetenv`). | Opt-in via `NewOsEnvDiscovery()`. Visible to child processes spawned from the test. |
 
-> Thread-safety caveat: `os.Setenv`/`Getenv` are not safe for concurrent use on all platforms. `OsEnvStore` is intended for cross-process scenarios where in-process parallel mutation is not expected.
+> Thread-safety caveat: `os.Setenv`/`Getenv` are not safe for concurrent use on all platforms. testrig serializes its own writes through a package-level mutex; this does not protect against env mutations made outside testrig.
 
 ### Lifecycle Hooks
 
@@ -189,7 +197,9 @@ type LifecycleHook interface {
 }
 ```
 
-Hooks fire **after** all services in the `Env` have started (and **before** Stop is called for shutdown). They receive a stable, immutable `EnvContext` snapshot taken before `properties` is cleared, so `OnStop` sees the same view as `OnStart`. An `OnStart` failure aborts `Start` and triggers full `Stop`. `OnStop` failures are returned (first wins; subsequent are logged).
+Hooks fire **after** all services in the `Env` have started (and **before** Stop is called for shutdown). They receive a stable, immutable `EnvContext` snapshot taken before `properties` is cleared, so `OnStop` sees the same view as `OnStart`. An `OnStart` failure aborts `Start` and triggers full `Stop`. `OnStop` failures are joined into the returned error so cleanup-style hooks always run.
+
+Hooks are an opt-in convenience for cross-cutting concerns that span the whole env (e.g. running migrations after Postgres is up, writing a debug artifact, emitting env-startup metrics). Most setup is better expressed as a plain `Service` with `Dependencies` — hooks are most useful when you need OnStop to run *after* every service has stopped, which a service's own `Stop` cannot model.
 
 ### `SetEnvVars`
 
@@ -199,13 +209,9 @@ func SetEnvVars(t *testing.T, props Properties)
 
 Sets each property as an OS environment variable using `t.Setenv`, with deterministic (sorted) order. Cleanup is automatic via the `*testing.T`. Panics if the test has already called `t.Parallel()`. For parallel-safe tests, pass `env.Properties()` directly to your config library's API instead.
 
-### `ScopedLogger`
+### Per-service logger
 
-```go
-func ScopedLogger(parent *slog.Logger, name string) *slog.Logger
-```
-
-Returns a child logger with `service=<name>` attached. Used internally by `Env` to scope per-service logs; exposed for use from inside `Service.Start` if a service wants to derive further child loggers.
+`Env` scopes its logger with `service=<name>` before handing it to each service via `EnvContext.Logger()`. Services that want a deeper child can compose with the standard library directly: `envCtx.Logger().With("subscope", "x")`.
 
 ## Property Injection Patterns
 
@@ -231,46 +237,47 @@ testrig.SetEnvVars(t, props)
 
 See `examples/viper-app` and `examples/koanf-app` for full patterns.
 
-## Testkits
+## Pre-built services
 
-Each package under `pkg/testrig/testkits/` provides a `Testkit` — a pre-configured test harness for a specific dependency. Each Testkit:
+Each package under `services/` provides a service type — a pre-configured test harness for a specific dependency. Each:
 
 - Implements `testrig.Service`, so it can be added to an `Env` via `env.With(...)`.
-- Is constructed with `New(name)` and configured via chainable `With*` methods that mutate and return `*Testkit` (no separate Builder type).
-- Exposes typed-client accessors directly on `*Testkit` (e.g. `*postgres.Testkit.DSN()`, `.DB(ctx)`; `*wiremock.Testkit.URL()`, `.Client()`). These are valid only after `Env.Start()`.
+- Is constructed with `New(name)` and configured via chainable `With*` methods that mutate and return `*<Type>` (no separate Builder type).
+- Exposes typed-client accessors directly on the value (e.g. `*postgres.Postgres.DSN()`, `.DB(ctx)`; `*wiremock.WireMock.URL()`, `.Client()`). These are valid only after `Env.Start()`.
 
 Configuration methods accept primitive args and do not panic on nil.
 
-### `pkg/testrig/testkits/postgres`
+### `services/postgres`
 
-A PostgreSQL Testkit backed by testcontainers-go.
+A PostgreSQL service backed by testcontainers-go.
 
 - Defaults: image `postgres:16-alpine`, db `testdb`, user/password `user`/`password`.
 - Properties exported under fixed keys: `<name>.host`, `<name>.port`, `<name>.user`, `<name>.password`, `<name>.dbname`, `<name>.dsn`. The DSN is built via `net/url` so credentials and db names with special characters round-trip correctly.
-- Identifier is a SHA-256 hash of a NUL-separated config encoding (image, tag, name, db, user, password) — robust against any character in any field. Same config across processes shares a container.
-- `*postgres.Testkit` exposes `DSN() string` and `DB(ctx) (*sql.DB, error)`. `DB` uses the `pgx` stdlib driver and Pings the connection before returning, so failures surface at the call site rather than on first query.
+- Identifier is a SHA-256 hash of a NUL-separated config encoding (image, tag, db, user, password) — robust against any character in any field. **Name is intentionally not part of the hash:** two Postgres instances with the same configuration but different display Names are equivalent for cross-env reuse. Use distinct configuration (different db name, image tag, etc.) to force isolation.
+- `*postgres.Postgres` exposes `DSN() string` and `DB(ctx) (*sql.DB, error)`. `DB` uses the `pgx` stdlib driver and Pings the connection before returning, so failures surface at the call site rather than on first query.
 
-### `pkg/testrig/testkits/wiremock`
+### `services/wiremock`
 
-A WireMock Testkit backed by testcontainers-go.
+A WireMock service backed by testcontainers-go.
 
 - Default image `wiremock/wiremock:3.2.0`.
 - Single property exported under the fixed key `<name>.url`.
-- `*wiremock.Testkit` exposes `URL() string` and `Client() *wiremock.Client`.
+- Identifier is a SHA-256 hash of (image, tag); Name is not part of the hash (same rationale as Postgres).
+- `*wiremock.WireMock` exposes `URL() string` and `Client() *wiremock.Client`.
 
 ## Concurrency & Safety
 
-- All builder configuration must complete **before** `Start`. Calling builders concurrently with `Start` or while running is a programmer error (undefined behaviour).
+- All configuration is applied at construction (`New(opts...)`); the resulting `*Env` is not mutated thereafter until `Start` is called. Calling `Start` concurrently with itself, or while the env is running, is rejected by the state machine.
 - The shared `Properties` map is guarded by an internal `sync.RWMutex`; reads in `Service.Start` use the `EnvContext` accessors.
 - Services are started concurrently using `errgroup`. Each service blocks on signals from its declared dependencies, ensuring `Service.Start` only sees properties of services it depends on.
 - `Stop` waits for all dependents to stop before stopping a given service.
 
 ## Conventions
 
-- Tests use the `_test` package suffix (black-box testing) by default, with white-box `internal_test.go` files where private behaviour needs coverage.
+- Tests use the `_test` package suffix (black-box testing) by default, with white-box `internals_test.go` files where private behaviour needs coverage.
 - No mocking frameworks: hand-written mocks live in test files or `internal/testutil`.
-- Builder methods on `*Env` panic on nil arguments. Builders return new `*Env` values; do not rely on receiver mutation.
-- Services published to discovery serialise their `Properties` as JSON. The framework tolerates legacy "active" markers for forward-compat reads.
+- Options validate their input and return errors from `New`; use `MustNew` if you want a panic on misconfiguration.
+- Services published to discovery serialise their `Properties` as JSON.
 
 ## Build & Test
 

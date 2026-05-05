@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sha1n/testrig-go/pkg/testrig"
+	"github.com/sha1n/testrig"
 )
 
 func TestProperties_TypeSafeHelpers(t *testing.T) {

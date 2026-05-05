@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sha1n/testrig-go/pkg/testrig"
+	"github.com/sha1n/testrig"
 	"github.com/stretchr/testify/assert"
 )
 

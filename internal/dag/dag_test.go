@@ -1,6 +1,8 @@
 package dag
 
 import (
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -94,5 +96,25 @@ func TestValidate(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestUnknownDepError_Error(t *testing.T) {
+	// Validate returns *UnknownDepError when a dep points to a missing node.
+	// The Error() method is the public-facing rendering used by callers that
+	// don't unwrap to the typed error — verify it surfaces both the offending
+	// node and the missing dependency so messages are debuggable.
+	err := Validate([]Node{mockNode{"alpha", []string{"missing"}}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var udErr *UnknownDepError
+	if !errors.As(err, &udErr) {
+		t.Fatalf("expected *UnknownDepError, got %T", err)
+	}
+	msg := udErr.Error()
+	if !strings.Contains(msg, "alpha") || !strings.Contains(msg, "missing") {
+		t.Errorf("Error() should include node and missing dep names; got %q", msg)
 	}
 }

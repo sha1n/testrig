@@ -25,7 +25,7 @@ type DiscoveryProvider interface {
 }
 
 // envDiscovery is a DiscoveryProvider backed by a DiscoveryStore.
-// Use NewDiscovery or NewCrossProcessDiscovery to create instances.
+// Use NewDiscovery or NewOsEnvDiscovery to create instances.
 type envDiscovery struct {
 	store DiscoveryStore
 }
@@ -40,9 +40,13 @@ func NewDiscovery(store DiscoveryStore) DiscoveryProvider {
 	return &envDiscovery{store: store}
 }
 
-// NewCrossProcessDiscovery creates a DiscoveryProvider backed by OS environment
-// variables, suitable for cross-process service reuse.
-func NewCrossProcessDiscovery() DiscoveryProvider {
+// NewOsEnvDiscovery creates a DiscoveryProvider backed by OS environment
+// variables. Suitable for parent → child process discovery: services published
+// by the test process are visible to subprocesses spawned afterward (which
+// inherit the env). Not a mechanism for sharing services across sibling
+// processes — env mutations do not flow sideways, so e.g. independent
+// `go test` package binaries do not see each other's published services.
+func NewOsEnvDiscovery() DiscoveryProvider {
 	return NewDiscovery(NewOsEnvStore())
 }
 
@@ -55,16 +59,11 @@ func (d *envDiscovery) Discover(ctx context.Context, svc Service) (Properties, b
 
 	props := make(Properties)
 	if err := json.Unmarshal([]byte(val), &props); err != nil {
-		// If it's not JSON, it might be the old "active" marker.
-		// Return empty properties but indicate it was found.
-		return make(Properties), true, nil
+		return nil, false, fmt.Errorf("failed to decode discovery data for %s: %w", svc.Name(), err)
 	}
 
 	// Liveness check: verify the discovered service is actually running.
-	// Known limitation: uses a hardcoded 2s timeout, not the caller's context deadline.
-	// Callers who need fast cancellation should cancel the parent Start() context,
-	// which short-circuits at the dependency-wait level.
-	if !livenessCheck(props, svc.Name()) {
+	if !livenessCheck(ctx, props, svc.Name()) {
 		return nil, false, nil
 	}
 
@@ -93,16 +92,23 @@ func (d *envDiscovery) Unpublish(ctx context.Context, svc Service) error {
 	return nil
 }
 
-// livenessCheck attempts a TCP dial to verify the discovered service is actually running.
-// It uses the well-known "<svcName>.host" and "<svcName>.port" property keys.
-// If those keys are not present, the check is skipped (backwards-compatible).
-func livenessCheck(props Properties, svcName string) bool {
+// livenessCheck attempts a TCP dial to verify the discovered service is actually
+// running. It uses the well-known "<svcName>.host" and "<svcName>.port" property
+// keys. If those keys are not present, the check is skipped.
+//
+// The dial respects the caller's context. A 2-second cap is also applied so an
+// unbounded ctx cannot stall discovery on a slow-failing host; the effective
+// timeout is the minimum of the ctx deadline and the cap.
+func livenessCheck(ctx context.Context, props Properties, svcName string) bool {
 	host, hasHost := props[svcName+".host"]
 	port, hasPort := props[svcName+".port"]
 	if !hasHost || !hasPort {
 		return true // No address to check; assume alive.
 	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 2*time.Second)
+	dialCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		return false
 	}

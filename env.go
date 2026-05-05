@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/sha1n/testrig-go/internal/dag"
+	"github.com/sha1n/testrig/internal/dag"
 	"golang.org/x/sync/errgroup"
 )
 

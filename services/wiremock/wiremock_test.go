@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sha1n/testrig-go/internal/testutil"
-	"github.com/sha1n/testrig-go/pkg/testrig/testkits/wiremock"
+	"github.com/sha1n/testrig/internal/testutil"
+	"github.com/sha1n/testrig/services/wiremock"
 )
 
-func TestTestkit_Defaults(t *testing.T) {
+func TestWireMock_Defaults(t *testing.T) {
 	tk := wiremock.New("test-mock")
 
 	if tk.Name() != "test-mock" {
@@ -34,7 +34,7 @@ func TestTestkit_Defaults(t *testing.T) {
 	}
 }
 
-func TestTestkit_Configured(t *testing.T) {
+func TestWireMock_Configured(t *testing.T) {
 	tk := wiremock.New("custom-mock").
 		WithImage("wiremock/wiremock").
 		WithTag("3.3.1")
@@ -50,7 +50,7 @@ func TestTestkit_Configured(t *testing.T) {
 	}
 }
 
-func TestTestkit_Identifier_StableAndCollisionResistant(t *testing.T) {
+func TestWireMock_Identifier_StableAndCollisionResistant(t *testing.T) {
 	a := wiremock.New("svc")
 	b := wiremock.New("svc")
 	c := wiremock.New("svc").WithTag("3.3.1")
@@ -63,7 +63,16 @@ func TestTestkit_Identifier_StableAndCollisionResistant(t *testing.T) {
 	}
 }
 
-func TestTestkit_StartTwice_ReturnsError(t *testing.T) {
+func TestWireMock_Identifier_IndependentOfName(t *testing.T) {
+	a := wiremock.New("primary")
+	b := wiremock.New("replica")
+
+	if a.Identifier() != b.Identifier() {
+		t.Error("Identifier should be independent of Name; same config must yield same identifier regardless of display name")
+	}
+}
+
+func TestWireMock_StartTwice_ReturnsError(t *testing.T) {
 	tk := wiremock.New("twice")
 	if _, err := tk.Start(context.Background(), &testutil.MockEnvContext{}); err != nil {
 		t.Fatalf("First Start failed: %v", err)
@@ -75,9 +84,9 @@ func TestTestkit_StartTwice_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestTestkit_StopThenStart_Succeeds(t *testing.T) {
-	// A testkit instance must be reusable across env restart cycles. Stop
-	// releases the container and clears testkit state so a subsequent Start
+func TestWireMock_StopThenStart_Succeeds(t *testing.T) {
+	// A service instance must be reusable across env restart cycles. Stop
+	// releases the container and clears service state so a subsequent Start
 	// builds a fresh one.
 	tk := wiremock.New("restart-test")
 	ctx := context.Background()
@@ -96,7 +105,7 @@ func TestTestkit_StopThenStart_Succeeds(t *testing.T) {
 	}
 }
 
-func TestTestkit_Start_Error(t *testing.T) {
+func TestWireMock_Start_Error(t *testing.T) {
 	tk := wiremock.New("err-wm").WithImage("non-existent-image-12345")
 	_, err := tk.Start(context.Background(), &testutil.MockEnvContext{})
 	if err == nil {
@@ -104,14 +113,14 @@ func TestTestkit_Start_Error(t *testing.T) {
 	}
 }
 
-func TestTestkit_Stop_NoContainer(t *testing.T) {
+func TestWireMock_Stop_NoContainer(t *testing.T) {
 	tk := wiremock.New("no-container")
 	if err := tk.Stop(context.Background()); err != nil {
 		t.Errorf("Stop without container should be no-op, got %v", err)
 	}
 }
 
-func TestTestkit_URL_MatchesProperty(t *testing.T) {
+func TestWireMock_URL_MatchesProperty(t *testing.T) {
 	tk := wiremock.New("url-match")
 
 	props, err := tk.Start(context.Background(), &testutil.MockEnvContext{})
@@ -125,7 +134,7 @@ func TestTestkit_URL_MatchesProperty(t *testing.T) {
 	}
 }
 
-func TestTestkit_Client_NotNil(t *testing.T) {
+func TestWireMock_Client_NotNil(t *testing.T) {
 	tk := wiremock.New("client-test")
 
 	if _, err := tk.Start(context.Background(), &testutil.MockEnvContext{}); err != nil {

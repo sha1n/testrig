@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sha1n/testrig-go/pkg/testrig"
+	"github.com/sha1n/testrig"
 )
 
 // These tests describe the functional-options public API:

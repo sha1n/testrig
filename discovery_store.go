@@ -83,7 +83,7 @@ var osEnvMu sync.Mutex
 
 // NewOsEnvStore creates a DiscoveryStore backed by OS environment variables.
 // Returns a DiscoveryStore; the concrete type is an implementation detail.
-// Prefer NewCrossProcessDiscovery() unless you need to compose the store directly.
+// Prefer NewOsEnvDiscovery() unless you need to compose the store directly.
 func NewOsEnvStore() DiscoveryStore {
 	return &osEnvStore{}
 }

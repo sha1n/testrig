@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sha1n/testrig-go/internal/testutil"
-	"github.com/sha1n/testrig-go/pkg/testrig/testkits/postgres"
+	"github.com/sha1n/testrig/internal/testutil"
+	"github.com/sha1n/testrig/services/postgres"
 )
 
-func TestTestkit_Defaults(t *testing.T) {
+func TestPostgres_Defaults(t *testing.T) {
 	tk := postgres.New("test-db")
 
 	if tk.Name() != "test-db" {
@@ -49,7 +49,7 @@ func TestTestkit_Defaults(t *testing.T) {
 	}
 }
 
-func TestTestkit_Configured(t *testing.T) {
+func TestPostgres_Configured(t *testing.T) {
 	tk := postgres.New("custom-db").
 		WithImage("postgres").
 		WithTag("15-alpine").
@@ -85,7 +85,7 @@ func TestTestkit_Configured(t *testing.T) {
 	}
 }
 
-func TestTestkit_DSNProperty_URLEncodesSpecialChars(t *testing.T) {
+func TestPostgres_DSNProperty_URLEncodesSpecialChars(t *testing.T) {
 	tk := postgres.New("special").WithPassword("p@ss/word:1")
 
 	props, err := tk.Start(context.Background(), &testutil.MockEnvContext{})
@@ -101,7 +101,7 @@ func TestTestkit_DSNProperty_URLEncodesSpecialChars(t *testing.T) {
 	}
 }
 
-func TestTestkit_Identifier_StableAndCollisionResistant(t *testing.T) {
+func TestPostgres_Identifier_StableAndCollisionResistant(t *testing.T) {
 	a := postgres.New("svc").WithPassword("foo:bar")
 	b := postgres.New("svc").WithPassword("foo:bar")
 	c := postgres.New("svc").WithPassword("foo:baz")
@@ -114,7 +114,16 @@ func TestTestkit_Identifier_StableAndCollisionResistant(t *testing.T) {
 	}
 }
 
-func TestTestkit_StartTwice_ReturnsError(t *testing.T) {
+func TestPostgres_Identifier_IndependentOfName(t *testing.T) {
+	a := postgres.New("primary").WithDatabase("app")
+	b := postgres.New("replica").WithDatabase("app")
+
+	if a.Identifier() != b.Identifier() {
+		t.Error("Identifier should be independent of Name; same config must yield same identifier regardless of display name")
+	}
+}
+
+func TestPostgres_StartTwice_ReturnsError(t *testing.T) {
 	tk := postgres.New("twice")
 	if _, err := tk.Start(context.Background(), &testutil.MockEnvContext{}); err != nil {
 		t.Fatalf("First Start failed: %v", err)
@@ -126,9 +135,9 @@ func TestTestkit_StartTwice_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestTestkit_StopThenStart_Succeeds(t *testing.T) {
-	// A testkit instance must be reusable across env restart cycles. Stop
-	// releases the container and clears testkit state so a subsequent Start
+func TestPostgres_StopThenStart_Succeeds(t *testing.T) {
+	// A service instance must be reusable across env restart cycles. Stop
+	// releases the container and clears service state so a subsequent Start
 	// builds a fresh one.
 	tk := postgres.New("restart-test")
 	ctx := context.Background()
@@ -147,7 +156,7 @@ func TestTestkit_StopThenStart_Succeeds(t *testing.T) {
 	}
 }
 
-func TestTestkit_Start_Error(t *testing.T) {
+func TestPostgres_Start_Error(t *testing.T) {
 	tk := postgres.New("err-db").WithImage("non-existent-image-12345")
 	_, err := tk.Start(context.Background(), &testutil.MockEnvContext{})
 	if err == nil {
@@ -155,14 +164,14 @@ func TestTestkit_Start_Error(t *testing.T) {
 	}
 }
 
-func TestTestkit_Stop_NoContainer(t *testing.T) {
+func TestPostgres_Stop_NoContainer(t *testing.T) {
 	tk := postgres.New("no-container")
 	if err := tk.Stop(context.Background()); err != nil {
 		t.Errorf("Stop without container should be no-op, got %v", err)
 	}
 }
 
-func TestTestkit_DSN_MatchesProperty(t *testing.T) {
+func TestPostgres_DSN_MatchesProperty(t *testing.T) {
 	tk := postgres.New("dsn-match").WithPassword("p@ss/word:1")
 
 	props, err := tk.Start(context.Background(), &testutil.MockEnvContext{})
@@ -176,7 +185,7 @@ func TestTestkit_DSN_MatchesProperty(t *testing.T) {
 	}
 }
 
-func TestTestkit_DB_PingsAndReturnsConnection(t *testing.T) {
+func TestPostgres_DB_PingsAndReturnsConnection(t *testing.T) {
 	tk := postgres.New("db-test")
 
 	if _, err := tk.Start(context.Background(), &testutil.MockEnvContext{}); err != nil {
@@ -195,5 +204,22 @@ func TestTestkit_DB_PingsAndReturnsConnection(t *testing.T) {
 
 	if err := db.Ping(); err != nil {
 		t.Errorf("Ping on returned DB failed: %v", err)
+	}
+}
+
+func TestPostgres_DB_PingError_PropagatesContextCancel(t *testing.T) {
+	// DB() Pings before returning — verify a cancelled context surfaces as
+	// an error from DB() rather than a deferred dial failure on first query.
+	tk := postgres.New("db-ping-fail")
+	if _, err := tk.Start(context.Background(), &testutil.MockEnvContext{}); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = tk.Stop(context.Background()) }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before DB() runs Ping
+
+	if _, err := tk.DB(ctx); err == nil {
+		t.Fatal("expected error from DB() with cancelled context")
 	}
 }

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sha1n/testrig-go/pkg/testrig"
+	"github.com/sha1n/testrig"
 )
 
 // --- Mocks ---
@@ -244,21 +244,18 @@ func TestEnv_WithLogger(t *testing.T) {
 }
 
 func TestEnvDiscovery_Discover_InvalidJSON(t *testing.T) {
-	d := testrig.NewCrossProcessDiscovery()
+	d := testrig.NewOsEnvDiscovery()
 	s := &MockService{name: "invalid-json"}
 	key := "TESTRIG_SERVICE_" + s.Identifier()
 	_ = os.Setenv(key, "invalid-json")
 	defer func() { _ = os.Unsetenv(key) }()
 
-	props, found, err := d.Discover(context.Background(), s)
-	if err != nil {
-		t.Fatalf("Discover failed: %v", err)
+	_, found, err := d.Discover(context.Background(), s)
+	if err == nil {
+		t.Fatal("Expected error from invalid-JSON discovery payload")
 	}
-	if !found {
-		t.Error("Expected found to be true")
-	}
-	if len(props) != 0 {
-		t.Errorf("Expected empty props, got %v", props)
+	if found {
+		t.Error("Expected found=false on decode error")
 	}
 }
 
@@ -604,6 +601,33 @@ func TestEnv_Stop_WithDependents(t *testing.T) {
 	}
 }
 
+func TestEnv_Stop_ContextCancelled_WhileWaitingForDependent(t *testing.T) {
+	// A -> B. During Stop, B's goroutine waits for A's stopSignal because B
+	// has A as a dependent. If the parent ctx cancels before A's slow Stop
+	// finishes, B must surface the ctx error rather than block indefinitely.
+	sB := &MockService{name: "B"}
+	sA := &MockService{name: "A", deps: []string{"B"}, onStop: func() {
+		// Hold A's stop long enough that B gets to wait, then ctx deadlines.
+		time.Sleep(500 * time.Millisecond)
+	}}
+
+	env := testrig.MustNew(testrig.With(sA, sB))
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := env.Stop(ctx)
+	if err == nil {
+		t.Fatal("expected error from ctx cancellation while waiting for dependent")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected DeadlineExceeded, got: %v", err)
+	}
+}
+
 func TestEnv_Stop_MultipleHooksError(t *testing.T) {
 	s1 := &MockService{name: "svc1"}
 
@@ -735,7 +759,7 @@ func TestEnvContext_TypeSafeHelpers(t *testing.T) {
 // --- Task 1.2: Liveness Check ---
 
 func TestEnvDiscovery_Discover_DeadHostPort(t *testing.T) {
-	d := testrig.NewCrossProcessDiscovery()
+	d := testrig.NewOsEnvDiscovery()
 	svc := &MockService{name: "dead-svc"}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 
@@ -769,7 +793,7 @@ func TestEnvDiscovery_Discover_AliveHostPort(t *testing.T) {
 	defer func() { _ = ln.Close() }()
 
 	addr := ln.Addr().(*net.TCPAddr)
-	d := testrig.NewCrossProcessDiscovery()
+	d := testrig.NewOsEnvDiscovery()
 	svc := &MockService{name: "live-svc"}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 
@@ -795,7 +819,7 @@ func TestEnvDiscovery_Discover_AliveHostPort(t *testing.T) {
 
 func TestEnvDiscovery_Discover_NoHostPort_IsLive(t *testing.T) {
 	// Properties without host+port should be treated as live (backwards-compatible).
-	d := testrig.NewCrossProcessDiscovery()
+	d := testrig.NewOsEnvDiscovery()
 	svc := &MockService{name: "no-addr-svc"}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 
@@ -816,7 +840,7 @@ func TestEnvDiscovery_Discover_NoHostPort_IsLive(t *testing.T) {
 // --- Task 1.3: Unpublish ---
 
 func TestEnvDiscovery_Unpublish(t *testing.T) {
-	d := testrig.NewCrossProcessDiscovery()
+	d := testrig.NewOsEnvDiscovery()
 	svc := &MockService{name: "to-unpublish"}
 	props := testrig.Properties{"k": "v"}
 
@@ -839,7 +863,7 @@ func TestEnv_Stop_Unpublishes_StartedService(t *testing.T) {
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	defer func() { _ = os.Unsetenv(key) }()
 
-	env := testrig.MustNew(testrig.With(svc), testrig.WithDiscovery(testrig.NewCrossProcessDiscovery()))
+	env := testrig.MustNew(testrig.With(svc), testrig.WithDiscovery(testrig.NewOsEnvDiscovery()))
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -949,15 +973,12 @@ func TestEnvDiscovery_WithMapStore_Discover_InvalidJSON(t *testing.T) {
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	_ = store.Store(key, "not-json")
 
-	props, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover failed: %v", err)
+	_, found, err := d.Discover(context.Background(), svc)
+	if err == nil {
+		t.Fatal("Expected error from non-JSON discovery payload")
 	}
-	if !found {
-		t.Error("Expected found=true for non-JSON value")
-	}
-	if len(props) != 0 {
-		t.Errorf("Expected empty props, got %v", props)
+	if found {
+		t.Error("Expected found=false on decode error")
 	}
 }
 
@@ -1028,8 +1049,8 @@ func TestEnvDiscovery_WithMapStore_Discover_AliveHostPort(t *testing.T) {
 	}
 }
 
-func TestNewCrossProcessDiscovery_UsesOsEnv(t *testing.T) {
-	d := testrig.NewCrossProcessDiscovery()
+func TestNewOsEnvDiscovery_UsesOsEnv(t *testing.T) {
+	d := testrig.NewOsEnvDiscovery()
 	svc := &MockService{name: "cross-proc"}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	t.Cleanup(func() { _ = os.Unsetenv(key) })
@@ -1109,7 +1130,7 @@ func TestEnvDiscovery_EmptyStringTreatedAsNotFound(t *testing.T) {
 }
 
 func TestEnvDiscovery_OsEnvStore_EmptyStringTreatedAsNotFound(t *testing.T) {
-	d := testrig.NewCrossProcessDiscovery()
+	d := testrig.NewOsEnvDiscovery()
 	svc := &MockService{name: "os-empty"}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	t.Cleanup(func() { _ = os.Unsetenv(key) })
@@ -1150,7 +1171,7 @@ func TestEnv_Start_DuplicateServiceName(t *testing.T) {
 	_ = env2.Stop(context.Background())
 }
 
-func TestEnvDiscovery_LivenessCheck_IgnoresContextDeadline(t *testing.T) {
+func TestEnvDiscovery_LivenessCheck_ExpiredContextTreatedAsNotLive(t *testing.T) {
 	store := testrig.NewMapStore()
 	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "deadline-svc"}
@@ -1161,13 +1182,12 @@ func TestEnvDiscovery_LivenessCheck_IgnoresContextDeadline(t *testing.T) {
 	}
 	_ = d.Publish(context.Background(), svc, deadProps)
 
-	// Use an already-expired context — Discover should still complete
-	// normally (returning found=false) rather than failing with a context error.
-	// This documents that the liveness check uses a hardcoded timeout,
-	// not the caller's context deadline.
+	// With an already-expired context, the dial fails immediately with a
+	// deadline-exceeded error and livenessCheck returns false. Discover
+	// surfaces that as found=false rather than propagating the ctx error,
+	// so the caller falls back to a fresh Start instead of aborting.
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
-	// Wait for context to actually expire.
 	<-ctx.Done()
 
 	_, found, err := d.Discover(ctx, svc)
@@ -1175,7 +1195,7 @@ func TestEnvDiscovery_LivenessCheck_IgnoresContextDeadline(t *testing.T) {
 		t.Fatalf("Discover returned error: %v", err)
 	}
 	if found {
-		t.Error("Expected found=false for dead port")
+		t.Error("Expected found=false for expired-ctx liveness check")
 	}
 }
 

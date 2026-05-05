@@ -1,5 +1,5 @@
-// Package postgres provides a Testkit backed by a Testcontainers PostgreSQL
-// container. The Testkit implements testrig.Service.
+// Package postgres provides a PostgreSQL service backed by Testcontainers.
+// The exported Postgres type implements testrig.Service.
 package postgres
 
 import (
@@ -14,7 +14,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/sha1n/testrig-go/pkg/testrig"
+	"github.com/sha1n/testrig"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -28,15 +28,15 @@ const (
 	defaultDBPassword = "password"
 )
 
-// Testkit is a pre-configured Postgres test harness. It implements
-// testrig.Service so it can be added to a testrig.Env, and (in a later commit)
-// exposes typed-client accessors usable once the env has started.
+// Postgres is a pre-configured PostgreSQL test harness. It implements
+// testrig.Service so it can be added to a testrig.Env, and exposes typed-client
+// accessors (DSN, DB) usable once the env has started.
 //
 // Construct with New, configure via the With* methods (chainable), then pass
-// to env.With(...). A Testkit instance is reusable across Start/Stop cycles:
+// to env.With(...). A Postgres instance is reusable across Start/Stop cycles:
 // Stop releases the container so a subsequent Start builds a fresh one.
 // Calling Start without Stop in between returns an error.
-type Testkit struct {
+type Postgres struct {
 	name       string
 	image      string
 	tag        string
@@ -52,9 +52,9 @@ type Testkit struct {
 	port      string
 }
 
-// New creates a Postgres Testkit with default configuration.
-func New(name string) *Testkit {
-	return &Testkit{
+// New creates a Postgres service with default configuration.
+func New(name string) *Postgres {
+	return &Postgres{
 		name:       name,
 		image:      defaultImage,
 		tag:        defaultTag,
@@ -66,42 +66,48 @@ func New(name string) *Testkit {
 }
 
 // WithImage sets the Docker image name.
-func (t *Testkit) WithImage(image string) *Testkit { t.image = image; return t }
+func (t *Postgres) WithImage(image string) *Postgres { t.image = image; return t }
 
 // WithTag sets the Docker image tag.
-func (t *Testkit) WithTag(tag string) *Testkit { t.tag = tag; return t }
+func (t *Postgres) WithTag(tag string) *Postgres { t.tag = tag; return t }
 
 // WithDatabase sets the database created on Start.
-func (t *Testkit) WithDatabase(name string) *Testkit { t.dbName = name; return t }
+func (t *Postgres) WithDatabase(name string) *Postgres { t.dbName = name; return t }
 
 // WithUsername sets the database username.
-func (t *Testkit) WithUsername(user string) *Testkit { t.dbUser = user; return t }
+func (t *Postgres) WithUsername(user string) *Postgres { t.dbUser = user; return t }
 
 // WithPassword sets the database password.
-func (t *Testkit) WithPassword(pass string) *Testkit { t.dbPassword = pass; return t }
+func (t *Postgres) WithPassword(pass string) *Postgres { t.dbPassword = pass; return t }
 
 // Name implements testrig.Service.
-func (t *Testkit) Name() string { return t.name }
+func (t *Postgres) Name() string { return t.name }
 
-// Identifier returns a content-addressed identifier over the testkit config.
+// Identifier returns a content-addressed identifier over the service config.
 // SHA-256 of a NUL-separated encoding so no character in any field can break it.
-func (t *Testkit) Identifier() string {
-	parts := []string{"postgres", t.image, t.tag, t.name, t.dbName, t.dbUser, t.dbPassword}
+//
+// Name is intentionally NOT part of the hash: two Postgres instances configured
+// identically (same image/tag/db/credentials) but constructed with different
+// Names are equivalent for cross-env reuse — they would otherwise needlessly
+// duplicate identical containers. Use distinct configuration (different
+// database name, image tag, etc.) to force isolation, not the display Name.
+func (t *Postgres) Identifier() string {
+	parts := []string{"postgres", t.image, t.tag, t.dbName, t.dbUser, t.dbPassword}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return "postgres:" + hex.EncodeToString(sum[:])
 }
 
 // Dependencies implements testrig.Service. Postgres is a leaf service.
-func (t *Testkit) Dependencies() []string { return nil }
+func (t *Postgres) Dependencies() []string { return nil }
 
 // Start implements testrig.Service. Returns an error if called while a
 // previous Start is still active (i.e. Stop has not been called).
-func (t *Testkit) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
+func (t *Postgres) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
 	if t.container != nil {
-		return nil, fmt.Errorf("postgres testkit %q already started", t.name)
+		return nil, fmt.Errorf("postgres service %q already started", t.name)
 	}
 	t.logger = envCtx.Logger()
-	t.logger.Info("🎬 Starting Postgres testkit", "name", t.name)
+	t.logger.Info("🎬 Starting Postgres service", "name", t.name)
 
 	container, err := postgres.Run(ctx,
 		fmt.Sprintf("%s:%s", t.image, t.tag),
@@ -145,13 +151,13 @@ func (t *Testkit) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig
 }
 
 // Stop implements testrig.Service. Safe to call before Start or twice in
-// a row. Releases the container and clears runtime state so the testkit can
+// a row. Releases the container and clears runtime state so the service can
 // be Started again.
-func (t *Testkit) Stop(ctx context.Context) error {
+func (t *Postgres) Stop(ctx context.Context) error {
 	if t.container == nil {
 		return nil
 	}
-	t.logger.Info("🛑 Stopping Postgres testkit", "name", t.name)
+	t.logger.Info("🛑 Stopping Postgres service", "name", t.name)
 	err := t.container.Terminate(ctx)
 	t.container = nil
 	t.host = ""
@@ -160,14 +166,14 @@ func (t *Testkit) Stop(ctx context.Context) error {
 }
 
 // DSN returns the canonical PostgreSQL DSN. Only valid after Start.
-func (t *Testkit) DSN() string { return t.dsn() }
+func (t *Postgres) DSN() string { return t.dsn() }
 
 // DB opens a *sql.DB connected to the Postgres container and verifies the
 // connection by Pinging it. Only valid after Start.
 //
 // sql.Open by itself does not dial — it just parses the DSN — so this method
 // returns a real connection error rather than a dial-deferred handle.
-func (t *Testkit) DB(ctx context.Context) (*sql.DB, error) {
+func (t *Postgres) DB(ctx context.Context) (*sql.DB, error) {
 	db, err := sql.Open("pgx", t.dsn())
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres connection: %w", err)
@@ -182,7 +188,7 @@ func (t *Testkit) DB(ctx context.Context) (*sql.DB, error) {
 // dsn builds the canonical DSN using net/url so credentials and db names with
 // special characters round-trip correctly. Used both internally (to populate
 // the dsn property in Start) and by the public DSN() accessor.
-func (t *Testkit) dsn() string {
+func (t *Postgres) dsn() string {
 	u := &url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(t.dbUser, t.dbPassword),

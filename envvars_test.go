@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sha1n/testrig-go/pkg/testrig"
+	"github.com/sha1n/testrig"
 )
 
 func TestSetEnvVars_PanicsOnParallelTest(t *testing.T) {

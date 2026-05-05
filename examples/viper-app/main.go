@@ -3,16 +3,25 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"reflect"
 
-	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
 )
 
+// Indirected for tests so main can be exercised end-to-end without binding a
+// fixed port, blocking forever, or terminating the test process.
+var (
+	listenAndServe = http.Serve
+	listen         = net.Listen
+	exit           = os.Exit
+)
+
 type Config struct {
-	AppPort     int    `mapstructure:"APP_PORT" validate:"required"`
-	DatabaseURL string `mapstructure:"DATABASE_URL" validate:"required"`
+	AppPort     int    `mapstructure:"APP_PORT"`
+	DatabaseURL string `mapstructure:"DATABASE_URL"`
 }
 
 // LoadConfig creates a Config from environment variables, with optional
@@ -32,37 +41,56 @@ func LoadConfig(overrides map[string]string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	validate := validator.New()
-	if err := validate.Struct(&cfg); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+	if cfg.AppPort == 0 {
+		return nil, fmt.Errorf("APP_PORT is required")
+	}
+	if cfg.DatabaseURL == "" {
+		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
 
 	return &cfg, nil
 }
 
 func bindEnvs(v *viper.Viper, iface any) {
-	for field := range reflect.TypeOf(iface).Fields() {
-		envName := field.Tag.Get("mapstructure")
+	t := reflect.TypeOf(iface)
+	for i := 0; i < t.NumField(); i++ {
+		envName := t.Field(i).Tag.Get("mapstructure")
 		if envName != "" {
 			_ = v.BindEnv(envName)
 		}
 	}
 }
 
-func main() {
-	cfg, err := LoadConfig(nil)
-	if err != nil {
-		log.Fatalf("Config error: %v", err)
-	}
-
+// newHandler returns the HTTP handler the example serves. Extracted so tests
+// can exercise it without binding a real port.
+func newHandler(cfg *Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK - " + cfg.DatabaseURL))
 	})
-
-	log.Printf("Starting server on port %d...", cfg.AppPort)
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.AppPort), mux); err != nil {
-		log.Fatal(err)
-	}
+	return mux
 }
+
+// run encapsulates the bootstrap so main is a thin shim and tests can drive
+// the full path with overridden listen/serve/exit hooks.
+func run() int {
+	cfg, err := LoadConfig(nil)
+	if err != nil {
+		log.Printf("Config error: %v", err)
+		return 1
+	}
+	ln, err := listen("tcp", fmt.Sprintf(":%d", cfg.AppPort))
+	if err != nil {
+		log.Printf("listen error: %v", err)
+		return 1
+	}
+	log.Printf("Starting server on port %d...", cfg.AppPort)
+	if err := listenAndServe(ln, newHandler(cfg)); err != nil && err != http.ErrServerClosed {
+		log.Printf("serve error: %v", err)
+		return 1
+	}
+	return 0
+}
+
+func main() { exit(run()) }

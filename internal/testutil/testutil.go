@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/sha1n/testrig-go/pkg/testrig"
+	"github.com/sha1n/testrig"
 )
 
 // MockEnvContext is a mock implementation of testrig.EnvContext for testing purposes.

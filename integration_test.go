@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sha1n/testrig-go/pkg/testrig"
+	"github.com/sha1n/testrig"
 )
 
 // --- Mock DiscoveryProvider for error injection ---
@@ -76,7 +76,7 @@ func TestIntegration_FullLifecycle_CrossProcessDiscovery(t *testing.T) {
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	t.Cleanup(func() { _ = os.Unsetenv(key) })
 
-	env := testrig.MustNew(testrig.WithDiscovery(testrig.NewCrossProcessDiscovery()), testrig.With(svc))
+	env := testrig.MustNew(testrig.WithDiscovery(testrig.NewOsEnvDiscovery()), testrig.With(svc))
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}

@@ -1,6 +1,8 @@
 # Build Plan
 
-This document tracks feature delivery for the initial build-up of `testrig-go`. Each item is a single commit. Tick a box when the corresponding commit lands on `master`.
+This document tracks feature delivery for the initial build-up of `testrig`. Each item is a single commit. Tick a box when the corresponding commit lands on `master`.
+
+> Historical-accuracy note: descriptions below preserve the names that were in effect when each commit landed (e.g. "Testkit" type, `pkg/testrig/...` path, module `testrig-go`). A subsequent restructure flattened the layout to module root, renamed types to `postgres.Postgres` / `wiremock.WireMock`, and renamed the module to `github.com/sha1n/testrig`. See `docs/SPEC.md` for the current public surface.
 
 ## Status
 
@@ -15,7 +17,8 @@ This document tracks feature delivery for the initial build-up of `testrig-go`. 
 - [x] **feat: add wiremock testkit** — testcontainers-go WireMock Testkit (implements testrig.Service).
 - [x] **feat: add `viper-app` example** — config-injection demo using Viper.
 - [x] **feat: add `koanf-app` example** — config-injection demo using koanf.
-- [ ] **docs: expand README with usage and feature overview** — final polish; release-ready public docs.
+- [x] **docs: expand README with usage and feature overview** — final polish; release-ready public docs.
+- [x] **refactor: rename module, flatten layout, drop "Testkit" vocabulary** — module → `github.com/sha1n/testrig`; `pkg/testrig/*` → module root; `pkg/testrig/testkits/*` → `services/*`; types `Testkit` → `Postgres` / `WireMock`; `NewCrossProcessDiscovery` → `NewOsEnvDiscovery`; identifier hashes drop Name; liveness check respects ctx; SPEC rescoped for honest cross-process semantics; Go floor lowered to 1.24.
 
 ## Out of Scope (planned separately)
 

@@ -1,6 +1,6 @@
 # Viper Configuration Example
 
-Demonstrates integrating `testrig-go` with applications that use [Viper](https://github.com/spf13/viper) for configuration management, using parallel-safe in-memory injection.
+Demonstrates integrating `testrig` with applications that use [Viper](https://github.com/spf13/viper) for configuration management, using parallel-safe in-memory injection.
 
 ## How it works
 
@@ -12,8 +12,8 @@ Demonstrates integrating `testrig-go` with applications that use [Viper](https:/
 
 **Test code (`main_test.go`)**
 
-- Starts a `testrig.Env` with a Postgres testkit.
-- Bridges from the testkit's property keys (`pg.dsn`) to the application's config keys (`DATABASE_URL`) at the consumption site.
+- Starts a `testrig.Env` with a Postgres service.
+- Bridges from the service's property keys (`pg.dsn`) to the application's config keys (`DATABASE_URL`) at the consumption site.
 - Passes the result as overrides to `LoadConfig`.
 - **No `os.Setenv` calls** — properties are injected in-memory via Viper's API. Tests can safely run in parallel.
 

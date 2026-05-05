@@ -54,14 +54,13 @@ go-format:
 	@echo "  >  Formating source files..."
 	@if [ -n "$(GOFILES)" ]; then gofmt -s -w $(GOFILES); fi
 
-## coverage: Runs tests and displays coverage
+## coverage: Runs tests and displays coverage (all packages, including examples)
 .PHONY: coverage
 coverage:
 	@echo "  >  Running tests with coverage..."
 	@PKGS=`go list $(MODFLAGS) ./... 2>/dev/null`; \
 	if [ -z "$$PKGS" ]; then echo "  !  No packages found, skipping coverage."; exit 0; fi; \
-	COVERPKG=`echo "$$PKGS" | grep -v "/examples" | paste -sd "," -`; \
-	go test $(MODFLAGS) -coverprofile=coverage.out -covermode=count -coverpkg=$$COVERPKG ./...; \
+	go test $(MODFLAGS) -coverprofile=coverage.out -covermode=count -coverpkg=./... ./...; \
 	go tool cover -func=coverage.out
 
 .PHONY: go-test

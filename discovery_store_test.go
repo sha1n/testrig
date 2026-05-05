@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sha1n/testrig-go/pkg/testrig"
+	"github.com/sha1n/testrig"
 )
 
 // --- MapStore Tests ---
