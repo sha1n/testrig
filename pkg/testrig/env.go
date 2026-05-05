@@ -88,9 +88,9 @@ type Env struct {
 	hooks        []LifecycleHook
 }
 
-// NewEnv creates a new Env with isolation-safe defaults: in-process MapStore
+// New creates a new Env with isolation-safe defaults: in-process MapStore
 // for discovery (no OS env pollution) and slog.Default() logger.
-func NewEnv() *Env {
+func New() *Env {
 	return &Env{
 		name:         "testenv",
 		properties:   make(Properties),

@@ -86,7 +86,7 @@ Read-only handle into the environment, passed to `Service.Start`. Implementation
 The orchestrator. Builder-style API; all configuration must be set before `Start`.
 
 ```go
-env := testrig.NewEnv().
+env := testrig.New().
     WithName("integration-tests").
     WithLogger(myLogger).
     WithDiscovery(testrig.NewCrossProcessDiscovery()).
@@ -105,7 +105,7 @@ All builders return a **new `*Env`**; the receiver is not mutated. All builders 
 
 | Method | Semantics |
 |---|---|
-| `NewEnv()` | Defaults: name `"testenv"`, in-process `MapStore` discovery (per-`Start()` isolation), `slog.Default()` logger, no hooks, no services. |
+| `New()` | Defaults: name `"testenv"`, in-process `MapStore` discovery (per-`Start()` isolation), `slog.Default()` logger, no hooks, no services. |
 | `WithName(string)` | Last-wins. Panics on empty. |
 | `WithDiscovery(DiscoveryProvider)` | Last-wins. Panics on nil. |
 | `WithLogger(*slog.Logger)` | Last-wins. Panics on nil. |

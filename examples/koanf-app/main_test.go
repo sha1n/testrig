@@ -13,7 +13,7 @@ import (
 func TestKoanfConfigLoading(t *testing.T) {
 	pg := postgres.New("pg").WithDatabase("koanf_db")
 
-	env := testrig.NewEnv().With(pg)
+	env := testrig.New().With(pg)
 	require.NoError(t, env.Start(context.Background()))
 	t.Cleanup(func() { require.NoError(t, env.Stop(context.Background())) })
 
