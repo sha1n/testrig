@@ -291,11 +291,6 @@ func TestEnv_Start_ContextCancellation_WaitingForDependency(t *testing.T) {
 	}
 }
 
-func TestTestEnvContext_Properties(t *testing.T) {
-	// Verify that services can access properties of dependencies via EnvContext
-	// This test is now covered by TestEnv_ContextAccess below, so we can remove or leave empty.
-}
-
 type ContextConsumerService struct {
 	MockService
 	t *testing.T
