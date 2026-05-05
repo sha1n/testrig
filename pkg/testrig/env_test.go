@@ -274,6 +274,20 @@ func TestEnv_Start_UnknownDependency(t *testing.T) {
 	}
 }
 
+func TestEnv_Start_UnknownDependency_RejectsBeforeAnyServiceStarts(t *testing.T) {
+	var validStarted bool
+	valid := &MockService{name: "valid", onStart: func() { validStarted = true }}
+	bad := &MockService{name: "bad", deps: []string{"missing"}}
+
+	env := testrig.MustNew(testrig.With(valid, bad))
+	if err := env.Start(context.Background()); err == nil {
+		t.Fatal("Expected error due to unknown dependency, got nil")
+	}
+	if validStarted {
+		t.Error("valid service should NOT have started; configuration is invalid")
+	}
+}
+
 func TestEnv_Start_ContextCancellation_WaitingForDependency(t *testing.T) {
 	s1 := &MockService{name: "svc1", startDelay: 1 * time.Second}
 	s2 := &MockService{name: "svc2", deps: []string{"svc1"}}

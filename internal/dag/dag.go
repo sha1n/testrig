@@ -8,16 +8,36 @@ type Node interface {
 	Dependencies() []string
 }
 
-// Validate checks for circular dependencies in a set of nodes.
-func Validate(nodes []Node) error {
-	visited := make(map[string]bool)
-	recStack := make(map[string]bool)
-	nodeMap := make(map[string]Node)
+// UnknownDepError reports a dependency edge to a node not present in the graph.
+// Validate returns this error so callers can rewrap it with their domain
+// vocabulary (e.g. "service" instead of "node").
+type UnknownDepError struct {
+	Node       string
+	MissingDep string
+}
 
+func (e *UnknownDepError) Error() string {
+	return fmt.Sprintf("%s depends on unknown node %s", e.Node, e.MissingDep)
+}
+
+// Validate checks the graph is well-formed: every dependency points to a
+// known node and there are no cycles.
+func Validate(nodes []Node) error {
+	nodeMap := make(map[string]Node, len(nodes))
 	for _, n := range nodes {
 		nodeMap[n.ID()] = n
 	}
 
+	for _, n := range nodes {
+		for _, depID := range n.Dependencies() {
+			if _, ok := nodeMap[depID]; !ok {
+				return &UnknownDepError{Node: n.ID(), MissingDep: depID}
+			}
+		}
+	}
+
+	visited := make(map[string]bool, len(nodes))
+	recStack := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
 		if hasCycle(n.ID(), nodeMap, visited, recStack) {
 			return fmt.Errorf("circular dependency detected involving: %s", n.ID())

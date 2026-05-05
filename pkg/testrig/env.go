@@ -3,6 +3,7 @@ package testrig
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -429,14 +430,14 @@ func (e *Env) startService(pCtx context.Context, svc Service) error {
 	return nil
 }
 
+// waitForDependencies blocks until every dependency's start signal is closed
+// or the parent context is canceled. Validity of dependency names is
+// guaranteed by dag.Validate in prepareStart, so a missing entry here is a
+// programmer error (not user input).
 func (e *Env) waitForDependencies(pCtx context.Context, svc Service) error {
 	for _, depName := range svc.Dependencies() {
-		sig, ok := e.signals[depName]
-		if !ok {
-			return fmt.Errorf("service %s depends on unknown service %s", svc.Name(), depName)
-		}
 		select {
-		case <-sig:
+		case <-e.signals[depName]:
 		case <-pCtx.Done():
 			return pCtx.Err()
 		}
@@ -560,7 +561,14 @@ func (e *Env) validateDependencies() error {
 		nodes[i] = serviceNode{s}
 	}
 
-	return dag.Validate(nodes)
+	if err := dag.Validate(nodes); err != nil {
+		var udErr *dag.UnknownDepError
+		if errors.As(err, &udErr) {
+			return fmt.Errorf("service %s depends on unknown service %s", udErr.Node, udErr.MissingDep)
+		}
+		return err
+	}
+	return nil
 }
 
 type serviceNode struct {

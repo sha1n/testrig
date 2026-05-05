@@ -71,11 +71,20 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "missing dependency (should not be an error in DAG validation itself)",
+			name: "missing dependency",
 			nodes: []Node{
 				mockNode{"A", []string{"B"}},
 			},
-			wantErr: false,
+			wantErr: true,
+		},
+		{
+			name: "missing dependency in larger graph",
+			nodes: []Node{
+				mockNode{"A", []string{"B"}},
+				mockNode{"B", []string{"X"}},
+				mockNode{"C", nil},
+			},
+			wantErr: true,
 		},
 	}
 
