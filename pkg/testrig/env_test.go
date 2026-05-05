@@ -33,7 +33,7 @@ func (m *MockService) Name() string           { return m.name }
 func (m *MockService) Identifier() string     { return "mock:" + m.name }
 func (m *MockService) Dependencies() []string { return m.deps }
 
-func (m *MockService) Start(ctx context.Context, envCtx testrig.TestEnvContext) (testrig.Properties, error) {
+func (m *MockService) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
 	if m.startDelay > 0 {
 		select {
 		case <-time.After(m.startDelay):
@@ -58,18 +58,18 @@ func (m *MockService) Stop(ctx context.Context) error {
 }
 
 type MockLifecycleHook struct {
-	onStart func(ctx context.Context, envCtx testrig.TestEnvContext) error
-	onStop  func(ctx context.Context, envCtx testrig.TestEnvContext) error
+	onStart func(ctx context.Context, envCtx testrig.EnvContext) error
+	onStop  func(ctx context.Context, envCtx testrig.EnvContext) error
 }
 
-func (m *MockLifecycleHook) OnStart(ctx context.Context, envCtx testrig.TestEnvContext) error {
+func (m *MockLifecycleHook) OnStart(ctx context.Context, envCtx testrig.EnvContext) error {
 	if m.onStart != nil {
 		return m.onStart(ctx, envCtx)
 	}
 	return nil
 }
 
-func (m *MockLifecycleHook) OnStop(ctx context.Context, envCtx testrig.TestEnvContext) error {
+func (m *MockLifecycleHook) OnStop(ctx context.Context, envCtx testrig.EnvContext) error {
 	if m.onStop != nil {
 		return m.onStop(ctx, envCtx)
 	}
@@ -292,7 +292,7 @@ func TestEnv_Start_ContextCancellation_WaitingForDependency(t *testing.T) {
 }
 
 func TestTestEnvContext_Properties(t *testing.T) {
-	// Verify that services can access properties of dependencies via TestEnvContext
+	// Verify that services can access properties of dependencies via EnvContext
 	// This test is now covered by TestEnv_ContextAccess below, so we can remove or leave empty.
 }
 
@@ -301,7 +301,7 @@ type ContextConsumerService struct {
 	t *testing.T
 }
 
-func (s *ContextConsumerService) Start(ctx context.Context, envCtx testrig.TestEnvContext) (testrig.Properties, error) {
+func (s *ContextConsumerService) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
 	val, ok := envCtx.Get("foo")
 	if !ok || val != "bar" {
 		s.t.Errorf("Expected foo=bar, got %s (ok=%v)", val, ok)
@@ -418,7 +418,7 @@ func TestEnv_WithLifecycleHook_Success(t *testing.T) {
 
 	var startCalled, stopCalled bool
 	pm := &MockLifecycleHook{
-		onStart: func(ctx context.Context, envCtx testrig.TestEnvContext) error {
+		onStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			startCalled = true
 			val, _ := envCtx.Get("foo")
 			if val != "bar" {
@@ -426,7 +426,7 @@ func TestEnv_WithLifecycleHook_Success(t *testing.T) {
 			}
 			return nil
 		},
-		onStop: func(ctx context.Context, envCtx testrig.TestEnvContext) error {
+		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			stopCalled = true
 			val, _ := envCtx.Get("foo")
 			if val != "bar" {
@@ -460,10 +460,10 @@ func TestEnv_WithLifecycleHook_OnStartError(t *testing.T) {
 
 	var stopCalled bool
 	pm := &MockLifecycleHook{
-		onStart: func(ctx context.Context, envCtx testrig.TestEnvContext) error {
+		onStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			return errors.New("start-fail")
 		},
-		onStop: func(ctx context.Context, envCtx testrig.TestEnvContext) error {
+		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			stopCalled = true
 			return nil
 		},
@@ -489,7 +489,7 @@ func TestEnv_WithLifecycleHook_OnStopError(t *testing.T) {
 	s1 := &MockService{name: "svc1"}
 
 	pm := &MockLifecycleHook{
-		onStop: func(ctx context.Context, envCtx testrig.TestEnvContext) error {
+		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			return errors.New("stop-fail")
 		},
 	}
@@ -532,10 +532,10 @@ func TestEnvContext_Logger(t *testing.T) {
 
 type loggerCapturingService struct {
 	MockService
-	capturedEnvCtx testrig.TestEnvContext
+	capturedEnvCtx testrig.EnvContext
 }
 
-func (s *loggerCapturingService) Start(ctx context.Context, envCtx testrig.TestEnvContext) (testrig.Properties, error) {
+func (s *loggerCapturingService) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
 	s.capturedEnvCtx = envCtx
 	return nil, nil
 }
@@ -577,12 +577,12 @@ func TestEnv_Stop_MultipleHooksError(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	h1 := &MockLifecycleHook{
-		onStop: func(ctx context.Context, envCtx testrig.TestEnvContext) error {
+		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			return errors.New("err1")
 		},
 	}
 	h2 := &MockLifecycleHook{
-		onStop: func(ctx context.Context, envCtx testrig.TestEnvContext) error {
+		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			return errors.New("err2")
 		},
 	}
@@ -611,7 +611,7 @@ func TestEnvContext_TypeSafeHelpers(t *testing.T) {
 		},
 	}
 
-	var capturedCtx testrig.TestEnvContext
+	var capturedCtx testrig.EnvContext
 	// We need a way to capture the context in s2.Start
 	// Let's use a closure or a custom service.
 	svc2 := &loggerCapturingService{
@@ -763,7 +763,7 @@ type scopedLoggerCapturingService struct {
 	capturedLogger *slog.Logger
 }
 
-func (s *scopedLoggerCapturingService) Start(ctx context.Context, envCtx testrig.TestEnvContext) (testrig.Properties, error) {
+func (s *scopedLoggerCapturingService) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
 	s.capturedLogger = envCtx.Logger()
 	return nil, nil
 }

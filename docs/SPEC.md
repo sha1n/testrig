@@ -53,7 +53,7 @@ type Service interface {
     Name() string
     Identifier() string
     Dependencies() []string
-    Start(ctx context.Context, envCtx TestEnvContext) (Properties, error)
+    Start(ctx context.Context, envCtx EnvContext) (Properties, error)
     Stop(ctx context.Context) error
 }
 ```
@@ -66,10 +66,10 @@ A `Service` is a stateful dependency with a lifecycle. The framework calls `Star
 - `Start` returns the properties this service contributes to the shared `Properties` map.
 - `Stop` is only called for services this `Env` actually started (not for reused services).
 
-### `TestEnvContext`
+### `EnvContext`
 
 ```go
-type TestEnvContext interface {
+type EnvContext interface {
     Get(key string) (string, bool)
     Int(key string) (int, error)
     Bool(key string) (bool, error)
@@ -174,12 +174,12 @@ Two implementations provided:
 
 ```go
 type LifecycleHook interface {
-    OnStart(ctx, envCtx TestEnvContext) error
-    OnStop(ctx, envCtx TestEnvContext) error
+    OnStart(ctx, envCtx EnvContext) error
+    OnStop(ctx, envCtx EnvContext) error
 }
 ```
 
-Hooks fire **after** all services in the `Env` have started (and **before** Stop is called for shutdown). They receive a stable, immutable `TestEnvContext` snapshot taken before `properties` is cleared, so `OnStop` sees the same view as `OnStart`. An `OnStart` failure aborts `Start` and triggers full `Stop`. `OnStop` failures are returned (first wins; subsequent are logged).
+Hooks fire **after** all services in the `Env` have started (and **before** Stop is called for shutdown). They receive a stable, immutable `EnvContext` snapshot taken before `properties` is cleared, so `OnStop` sees the same view as `OnStart`. An `OnStart` failure aborts `Start` and triggers full `Stop`. `OnStop` failures are returned (first wins; subsequent are logged).
 
 ### `InjectIntoEnv`
 
@@ -251,7 +251,7 @@ A WireMock Testkit backed by testcontainers-go.
 ## Concurrency & Safety
 
 - All builder configuration must complete **before** `Start`. Calling builders concurrently with `Start` or while running is a programmer error (undefined behaviour).
-- The shared `Properties` map is guarded by an internal `sync.RWMutex`; reads in `Service.Start` use the `TestEnvContext` accessors.
+- The shared `Properties` map is guarded by an internal `sync.RWMutex`; reads in `Service.Start` use the `EnvContext` accessors.
 - Services are started concurrently using `errgroup`. Each service blocks on signals from its declared dependencies, ensuring `Service.Start` only sees properties of services it depends on.
 - `Stop` waits for all dependents to stop before stopping a given service.
 

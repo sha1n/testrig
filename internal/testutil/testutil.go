@@ -7,7 +7,7 @@ import (
 	"github.com/sha1n/testrig-go/pkg/testrig"
 )
 
-// MockEnvContext is a mock implementation of testrig.TestEnvContext for testing purposes.
+// MockEnvContext is a mock implementation of testrig.EnvContext for testing purposes.
 type MockEnvContext struct {
 	Props testrig.Properties
 }

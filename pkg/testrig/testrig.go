@@ -49,8 +49,8 @@ func (p Properties) snapshot() Properties {
 	return cp
 }
 
-// TestEnvContext provides read-only access to properties of started services.
-type TestEnvContext interface {
+// EnvContext provides read-only access to properties of started services.
+type EnvContext interface {
 	// Get returns the value for the given key if it exists.
 	Get(key string) (string, bool)
 	// Int returns the value for the given key as an int.
@@ -74,8 +74,8 @@ type Service interface {
 	// Dependencies returns the names of services this service depends on.
 	Dependencies() []string
 	// Start starts the service and returns its properties.
-	// It receives a TestEnvContext to access properties of services it depends on.
-	Start(ctx context.Context, envCtx TestEnvContext) (Properties, error)
+	// It receives an EnvContext to access properties of services it depends on.
+	Start(ctx context.Context, envCtx EnvContext) (Properties, error)
 	// Stop stops the service.
 	Stop(ctx context.Context) error
 }
@@ -104,9 +104,9 @@ type LifecycleHook interface {
 	// OnStart is called after all services in the environment have started successfully.
 	// It can be used to set environment variables, create config files, etc.
 	// If it returns an error, the environment startup fails.
-	OnStart(ctx context.Context, envCtx TestEnvContext) error
+	OnStart(ctx context.Context, envCtx EnvContext) error
 	// OnStop is called after all services in the environment have stopped.
 	// It can be used to clean up resources created in OnStart.
 	// If it returns an error, the environment shutdown fails.
-	OnStop(ctx context.Context, envCtx TestEnvContext) error
+	OnStop(ctx context.Context, envCtx EnvContext) error
 }

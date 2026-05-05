@@ -7,7 +7,7 @@ This document tracks feature delivery for the initial build-up of `testrig-go`. 
 - [x] **chore: initial repo setup** — Makefile, `.gitignore`, basic CI (build + test), monthly Dependabot, minimal README, empty `go.mod`.
 - [x] **docs: add project specs and task plan** — `docs/SPEC.md` (target-state public API & semantics) and this file.
 - [x] **feat: add `internal/dag` for dependency graph validation** — cycle detection used by `Env`.
-- [x] **feat: add core types (`Service`, `Properties`, `TestEnvContext`)** — interface layer with no runtime; `pkg/testrig/testrig.go`.
+- [x] **feat: add core types (`Service`, `Properties`, `EnvContext`)** — interface layer with no runtime; `pkg/testrig/testrig.go`.
 - [x] **feat: add `DiscoveryStore` (`MapStore`, `OsEnvStore`)** — pluggable storage backends for discovery (lands before Env so the latter compiles).
 - [x] **feat: add `Env` with reactive Start/Stop lifecycle** — concurrent dependency-aware orchestration; envDiscovery providers; `internal/testutil` for shared test helpers.
 - [x] **feat: add `InjectIntoEnv` helper** — `t.Setenv`-based property → env-var injection.

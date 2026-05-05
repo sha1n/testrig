@@ -93,7 +93,7 @@ func (t *Testkit) Identifier() string {
 func (t *Testkit) Dependencies() []string { return nil }
 
 // Start implements testrig.Service. Returns an error if called twice.
-func (t *Testkit) Start(ctx context.Context, envCtx testrig.TestEnvContext) (testrig.Properties, error) {
+func (t *Testkit) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
 	if t.started {
 		return nil, fmt.Errorf("postgres testkit %q already started", t.name)
 	}

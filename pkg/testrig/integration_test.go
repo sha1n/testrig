@@ -371,7 +371,7 @@ func TestIntegration_OnStartHookFailure_RollsBackServices(t *testing.T) {
 	svc := &MockService{name: "hook-fail-svc", properties: testrig.Properties{"k": "v"}, onStop: func() { stopped = true }}
 
 	hook := &MockLifecycleHook{
-		onStart: func(ctx context.Context, envCtx testrig.TestEnvContext) error {
+		onStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			return errors.New("hook-fail")
 		},
 	}

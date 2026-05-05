@@ -15,7 +15,7 @@ type internalMockService struct{ name string }
 func (s *internalMockService) Name() string           { return s.name }
 func (s *internalMockService) Identifier() string     { return "mock:" + s.name }
 func (s *internalMockService) Dependencies() []string { return nil }
-func (s *internalMockService) Start(_ context.Context, _ TestEnvContext) (Properties, error) {
+func (s *internalMockService) Start(_ context.Context, _ EnvContext) (Properties, error) {
 	return nil, nil
 }
 func (s *internalMockService) Stop(_ context.Context) error { return nil }
