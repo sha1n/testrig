@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/sha1n/testrig-go/pkg/testrig"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -149,9 +151,29 @@ func (t *Testkit) Stop(ctx context.Context) error {
 	return nil
 }
 
+// DSN returns the canonical PostgreSQL DSN. Only valid after Start.
+func (t *Testkit) DSN() string { return t.dsn() }
+
+// DB opens a *sql.DB connected to the Postgres container and verifies the
+// connection by Pinging it. Only valid after Start.
+//
+// sql.Open by itself does not dial — it just parses the DSN — so this method
+// returns a real connection error rather than a dial-deferred handle.
+func (t *Testkit) DB(ctx context.Context) (*sql.DB, error) {
+	db, err := sql.Open("pgx", t.dsn())
+	if err != nil {
+		return nil, fmt.Errorf("failed to open postgres connection: %w", err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to ping postgres: %w", err)
+	}
+	return db, nil
+}
+
 // dsn builds the canonical DSN using net/url so credentials and db names with
-// special characters round-trip correctly. Used internally to populate the dsn
-// property; exposed publicly via DSN() in a later commit.
+// special characters round-trip correctly. Used both internally (to populate
+// the dsn property in Start) and by the public DSN() accessor.
 func (t *Testkit) dsn() string {
 	u := &url.URL{
 		Scheme:   "postgres",

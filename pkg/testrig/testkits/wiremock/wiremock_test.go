@@ -89,3 +89,30 @@ func TestTestkit_Stop_NoContainer(t *testing.T) {
 		t.Errorf("Stop without container should be no-op, got %v", err)
 	}
 }
+
+func TestTestkit_URL_MatchesProperty(t *testing.T) {
+	tk := wiremock.New("url-match")
+
+	props, err := tk.Start(context.Background(), &testutil.MockEnvContext{})
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = tk.Stop(context.Background()) }()
+
+	if tk.URL() != props["url-match.url"] {
+		t.Errorf("URL() and url-match.url property should match. URL()=%s prop=%s", tk.URL(), props["url-match.url"])
+	}
+}
+
+func TestTestkit_Client_NotNil(t *testing.T) {
+	tk := wiremock.New("client-test")
+
+	if _, err := tk.Start(context.Background(), &testutil.MockEnvContext{}); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = tk.Stop(context.Background()) }()
+
+	if tk.Client() == nil {
+		t.Error("Client() returned nil")
+	}
+}

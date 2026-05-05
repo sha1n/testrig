@@ -223,30 +223,30 @@ See `examples/viper-app` and `examples/koanf-app` for full patterns.
 
 ## Testkits
 
-Testkits are concrete `Service` implementations bundled with helper APIs. Each testkit provides:
-- A builder (`New<Name>Service(name)`) with `With*` methods (e.g. `WithImage`, `WithTag`, customisable property names).
-- A `Build()` that returns the service.
-- A separate `*TestKit` accessor with helper methods for the started service.
+Each package under `pkg/testrig/testkits/` provides a `Testkit` — a pre-configured test harness for a specific dependency. Each Testkit:
 
-Builder methods are not panic-on-nil (testkit builders accept primitive args).
+- Implements `testrig.Service`, so it can be added to an `Env` via `env.With(...)`.
+- Is constructed with `New(name)` and configured via chainable `With*` methods that mutate and return `*Testkit` (no separate Builder type).
+- Exposes typed-client accessors directly on `*Testkit` (e.g. `*postgres.Testkit.DSN()`, `.DB(ctx)`; `*wiremock.Testkit.URL()`, `.Client()`). These are valid only after `Env.Start()`.
 
-### `pkg/testkits/postgres`
+Configuration methods accept primitive args and do not panic on nil.
 
-Exports a PostgreSQL service via testcontainers-go.
+### `pkg/testrig/testkits/postgres`
+
+A PostgreSQL Testkit backed by testcontainers-go.
 
 - Defaults: image `postgres:16-alpine`, db `testdb`, user/password `user`/`password`.
-- Configurable property names for host/port/user/password/dbname (default `<svcName>.host` etc.).
-- Optional DSN export via `WithDSNPropertyName`.
-- Identifier is content-addressed over image+tag+name+db+user+password — same config across processes shares a container.
-- `PostgresTestKit` exposes `GetDSN()` and `GetDB() (*sql.DB, error)` (uses `pgx` stdlib driver).
+- Properties exported under fixed keys: `<name>.host`, `<name>.port`, `<name>.user`, `<name>.password`, `<name>.dbname`, `<name>.dsn`. The DSN is built via `net/url` so credentials and db names with special characters round-trip correctly.
+- Identifier is a SHA-256 hash of a NUL-separated config encoding (image, tag, name, db, user, password) — robust against any character in any field. Same config across processes shares a container.
+- `*postgres.Testkit` exposes `DSN() string` and `DB(ctx) (*sql.DB, error)`. `DB` uses the `pgx` stdlib driver and Pings the connection before returning, so failures surface at the call site rather than on first query.
 
-### `pkg/testkits/wiremock`
+### `pkg/testrig/testkits/wiremock`
 
-Exports a WireMock service via testcontainers-go.
+A WireMock Testkit backed by testcontainers-go.
 
 - Default image `wiremock/wiremock:3.2.0`.
-- Single property exported by default (`<svcName>.url`); customisable.
-- `WireMockTestKit` exposes `GetURL()` and `GetClient() *wiremock.Client`.
+- Single property exported under the fixed key `<name>.url`.
+- `*wiremock.Testkit` exposes `URL() string` and `Client() *wiremock.Client`.
 
 ## Concurrency & Safety
 

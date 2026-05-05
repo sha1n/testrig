@@ -140,3 +140,39 @@ func TestTestkit_Stop_NoContainer(t *testing.T) {
 		t.Errorf("Stop without container should be no-op, got %v", err)
 	}
 }
+
+func TestTestkit_DSN_MatchesProperty(t *testing.T) {
+	tk := postgres.New("dsn-match").WithPassword("p@ss/word:1")
+
+	props, err := tk.Start(context.Background(), &testutil.MockEnvContext{})
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = tk.Stop(context.Background()) }()
+
+	if tk.DSN() != props["dsn-match.dsn"] {
+		t.Errorf("DSN() and dsn-match.dsn property should match.\nDSN(): %s\nprop:  %s", tk.DSN(), props["dsn-match.dsn"])
+	}
+}
+
+func TestTestkit_DB_PingsAndReturnsConnection(t *testing.T) {
+	tk := postgres.New("db-test")
+
+	if _, err := tk.Start(context.Background(), &testutil.MockEnvContext{}); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = tk.Stop(context.Background()) }()
+
+	db, err := tk.DB(context.Background())
+	if err != nil {
+		t.Fatalf("DB failed: %v", err)
+	}
+	if db == nil {
+		t.Fatal("Expected non-nil *sql.DB")
+	}
+	defer db.Close()
+
+	if err := db.Ping(); err != nil {
+		t.Errorf("Ping on returned DB failed: %v", err)
+	}
+}

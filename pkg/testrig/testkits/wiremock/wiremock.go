@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/sha1n/testrig-go/pkg/testrig"
+	"github.com/wiremock/go-wiremock"
 	wiremock_tc "github.com/wiremock/wiremock-testcontainers-go"
 )
 
@@ -104,3 +105,9 @@ func (t *Testkit) Stop(ctx context.Context) error {
 	}
 	return nil
 }
+
+// URL returns the WireMock service base URL. Only valid after Start.
+func (t *Testkit) URL() string { return t.url }
+
+// Client returns a WireMock client ready for fluent stubbing. Only valid after Start.
+func (t *Testkit) Client() *wiremock.Client { return wiremock.NewClient(t.url) }
