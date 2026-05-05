@@ -363,8 +363,7 @@ func (e *Env) Start(ctx context.Context) error {
 		g.Go(func() error { return e.startService(pCtx, svc) })
 	}
 	if err := g.Wait(); err != nil {
-		_ = e.Stop(context.Background())
-		return err
+		return errors.Join(err, e.Stop(context.Background()))
 	}
 
 	e.mu.Lock()
@@ -372,8 +371,7 @@ func (e *Env) Start(ctx context.Context) error {
 	e.mu.Unlock()
 
 	if err := e.runOnStartHooks(ctx); err != nil {
-		_ = e.Stop(context.Background())
-		return err
+		return errors.Join(err, e.Stop(context.Background()))
 	}
 	return nil
 }

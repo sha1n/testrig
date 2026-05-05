@@ -362,6 +362,28 @@ func TestEnv_Start_Rollback(t *testing.T) {
 	}
 }
 
+func TestEnv_Start_Rollback_JoinsRollbackErrors(t *testing.T) {
+	startErr := errors.New("boom")
+	stopErr := errors.New("rollback-fail")
+	// s1 starts successfully but its Stop fails; s2's Start fails, triggering
+	// the rollback. The user must see BOTH the original Start failure and
+	// the rollback Stop failure.
+	s1 := &MockService{name: "s1", stopErr: stopErr}
+	s2 := &MockService{name: "s2", startErr: startErr}
+
+	env := testrig.MustNew(testrig.With(s1, s2))
+	err := env.Start(context.Background())
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+	if !errors.Is(err, startErr) {
+		t.Errorf("returned error must wrap original Start error; got %v", err)
+	}
+	if !errors.Is(err, stopErr) {
+		t.Errorf("returned error must also wrap rollback Stop error; got %v", err)
+	}
+}
+
 func TestEnv_ParallelStartStop(t *testing.T) {
 	// A -> B
 	// C -> B
