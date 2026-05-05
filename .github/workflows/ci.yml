@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build
+        run: |
+          PKGS=$(go list ./... 2>/dev/null || true)
+          if [ -n "$PKGS" ]; then go build ./...; else echo "No packages to build."; fi
+
+      - name: Test
+        run: |
+          PKGS=$(go list ./... 2>/dev/null || true)
+          if [ -n "$PKGS" ]; then go test -race ./...; else echo "No packages to test."; fi

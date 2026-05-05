@@ -1,0 +1,28 @@
+# Binaries for programs and plugins
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test output
+*.test
+*.out
+
+# IDEs and editors
+.idea/
+.vscode/
+.DS_Store
+*~
+.#*
+#*#
+
+# Dependency directories
+vendor/
+pkg/mod/
+
+# Build artifacts
+coverage.out
+bin/
+
+# Working notes / plans (not part of the repo)
+.plans/
