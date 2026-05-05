@@ -14,6 +14,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// envContext is the EnvContext implementation passed to Service.Start and
+// LifecycleHook callbacks. It borrows the parent Env's RWMutex via pointer
+// so reads on `properties` synchronize with concurrent writes by sibling
+// services; the zero value of sync.RWMutex on a value field would not share
+// state. Hook envContexts are constructed over a snapshot map and so are
+// effectively immutable.
 type envContext struct {
 	properties Properties
 	mu         *sync.RWMutex
@@ -157,7 +163,16 @@ func WithName(name string) Option {
 	}
 }
 
-// WithDiscovery replaces the discovery provider. Returns an error if d is nil.
+// WithDiscovery replaces the discovery provider. The same provider is reused
+// across every Start of this Env — that is the point of supplying one
+// explicitly, since cross-process and cross-env reuse rely on a stable
+// underlying store.
+//
+// Contrast with the default: New() without WithDiscovery installs a factory
+// that produces a fresh in-process MapStore per Start, so independent envs
+// are isolated by construction.
+//
+// Returns an error if d is nil.
 func WithDiscovery(d DiscoveryProvider) Option {
 	return func(c *envConfig) error {
 		if d == nil {
@@ -323,6 +338,10 @@ func (e *Env) Start(ctx context.Context) error {
 		return err
 	}
 
+	// prepareStart wrote run, signals, and properties under e.mu before
+	// returning. The act of spawning these goroutines establishes the
+	// happens-before edge for that write, so the workers can read those
+	// fields without retaking the lock.
 	g, pCtx := errgroup.WithContext(ctx)
 	for _, s := range e.services {
 		svc := s
