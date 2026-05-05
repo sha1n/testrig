@@ -75,6 +75,27 @@ func TestTestkit_StartTwice_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestTestkit_StopThenStart_Succeeds(t *testing.T) {
+	// A testkit instance must be reusable across env restart cycles. Stop
+	// releases the container and clears testkit state so a subsequent Start
+	// builds a fresh one.
+	tk := wiremock.New("restart-test")
+	ctx := context.Background()
+
+	if _, err := tk.Start(ctx, &testutil.MockEnvContext{}); err != nil {
+		t.Fatalf("first Start failed: %v", err)
+	}
+	if err := tk.Stop(ctx); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if _, err := tk.Start(ctx, &testutil.MockEnvContext{}); err != nil {
+		t.Fatalf("second Start after Stop must succeed; got: %v", err)
+	}
+	if err := tk.Stop(ctx); err != nil {
+		t.Fatalf("second Stop failed: %v", err)
+	}
+}
+
 func TestTestkit_Start_Error(t *testing.T) {
 	tk := wiremock.New("err-wm").WithImage("non-existent-image-12345")
 	_, err := tk.Start(context.Background(), &testutil.MockEnvContext{})

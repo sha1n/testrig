@@ -391,7 +391,14 @@ func (e *Env) validateServiceNames() error {
 
 // startService runs the full lifecycle for a single service: wait for its
 // declared dependencies to start, try discovery/reuse, otherwise call its
-// Start, then publish properties. Closes the service's signal on completion.
+// Start, then publish properties.
+//
+// Signal contract: run.signals[svc.Name()] is closed only on full success
+// (reuse or fresh-Start with successful Publish). On any error path the
+// signal is intentionally left open. Dependents waiting on it unblock via
+// pCtx.Done() instead, which errgroup cancels as soon as any goroutine
+// returns an error. This keeps "closed signal == dependency is ready" as a
+// strong invariant rather than just "this goroutine exited".
 func (e *Env) startService(pCtx context.Context, svc Service) error {
 	run := e.run // run.signals/properties/started/discovery are stable until Stop replaces run.
 	svcLogger := ScopedLogger(e.logger, svc.Name())

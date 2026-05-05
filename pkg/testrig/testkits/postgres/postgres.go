@@ -33,7 +33,9 @@ const (
 // exposes typed-client accessors usable once the env has started.
 //
 // Construct with New, configure via the With* methods (chainable), then pass
-// to env.With(...). Calling Start more than once returns an error.
+// to env.With(...). A Testkit instance is reusable across Start/Stop cycles:
+// Stop releases the container so a subsequent Start builds a fresh one.
+// Calling Start without Stop in between returns an error.
 type Testkit struct {
 	name       string
 	image      string
@@ -43,11 +45,11 @@ type Testkit struct {
 	dbPassword string
 	logger     *slog.Logger
 
-	// runtime state, populated during Start.
+	// Runtime state, populated during Start and cleared by Stop.
+	// container != nil is the canonical "currently running" check.
 	container *postgres.PostgresContainer
 	host      string
 	port      string
-	started   bool
 }
 
 // New creates a Postgres Testkit with default configuration.
@@ -92,9 +94,10 @@ func (t *Testkit) Identifier() string {
 // Dependencies implements testrig.Service. Postgres is a leaf service.
 func (t *Testkit) Dependencies() []string { return nil }
 
-// Start implements testrig.Service. Returns an error if called twice.
+// Start implements testrig.Service. Returns an error if called while a
+// previous Start is still active (i.e. Stop has not been called).
 func (t *Testkit) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
-	if t.started {
+	if t.container != nil {
 		return nil, fmt.Errorf("postgres testkit %q already started", t.name)
 	}
 	t.logger = envCtx.Logger()
@@ -118,7 +121,6 @@ func (t *Testkit) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig
 		return nil, fmt.Errorf("failed to start postgres container: %w", err)
 	}
 	t.container = container
-	t.started = true
 
 	host, err := container.Host(ctx)
 	if err != nil {
@@ -142,13 +144,19 @@ func (t *Testkit) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig
 	}, nil
 }
 
-// Stop implements testrig.Service. Safe to call before Start.
+// Stop implements testrig.Service. Safe to call before Start or twice in
+// a row. Releases the container and clears runtime state so the testkit can
+// be Started again.
 func (t *Testkit) Stop(ctx context.Context) error {
-	t.logger.Info("🛑 Stopping Postgres testkit", "name", t.name)
-	if t.container != nil {
-		return t.container.Terminate(ctx)
+	if t.container == nil {
+		return nil
 	}
-	return nil
+	t.logger.Info("🛑 Stopping Postgres testkit", "name", t.name)
+	err := t.container.Terminate(ctx)
+	t.container = nil
+	t.host = ""
+	t.port = ""
+	return err
 }
 
 // DSN returns the canonical PostgreSQL DSN. Only valid after Start.
