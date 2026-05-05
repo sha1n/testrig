@@ -294,132 +294,151 @@ func (e *Env) With(services ...Service) *Env {
 }
 
 func (e *Env) Start(ctx context.Context) error {
-	e.mu.Lock()
-	if e.state != stateIdle {
-		e.mu.Unlock()
-		return fmt.Errorf("environment %s is already running or starting", e.name)
-	}
-	e.state = stateStarting
-
-	// Validate duplicate service names
-	seen := make(map[string]bool, len(e.services))
-	for _, s := range e.services {
-		if seen[s.Name()] {
-			e.state = stateIdle
-			e.mu.Unlock()
-			return fmt.Errorf("duplicate service name: %s", s.Name())
-		}
-		seen[s.Name()] = true
-	}
-
-	if err := e.validateDependencies(); err != nil {
-		e.state = stateIdle
-		e.mu.Unlock()
+	if err := e.prepareStart(); err != nil {
 		return err
 	}
 
-	// Reset ephemeral state for reusability.
-	// Create discovery from the factory so default envs get an isolated MapStore
-	// per Start() while explicitly-shared providers are reused as intended.
-	e.discovery = e.newDiscovery()
-	e.properties = make(Properties)
-	e.reused = make(map[string]bool)
-	e.started = make(map[string]bool)
-	e.signals = make(map[string]chan struct{})
-	for _, s := range e.services {
-		e.signals[s.Name()] = make(chan struct{})
-	}
-	e.mu.Unlock()
-
 	g, pCtx := errgroup.WithContext(ctx)
-
 	for _, s := range e.services {
 		svc := s
-		g.Go(func() error {
-			// Task 3.1 — Per-service scoped logger so logs can be filtered by service name.
-			svcLogger := ScopedLogger(e.logger, svc.Name())
-			svcEnvCtx := &envContext{properties: e.properties, mu: &e.mu, logger: svcLogger}
-
-			// 1. Wait for dependencies
-			for _, depName := range svc.Dependencies() {
-				sig, ok := e.signals[depName]
-				if !ok {
-					return fmt.Errorf("service %s depends on unknown service %s", svc.Name(), depName)
-				}
-				select {
-				case <-sig:
-					// Dependency ready
-				case <-pCtx.Done():
-					return pCtx.Err()
-				}
-			}
-
-			// 2. Try discovery/reuse
-			discoveredProps, found, err := e.discovery.Discover(pCtx, svc)
-			if err != nil {
-				return fmt.Errorf("discovery failed for service %s: %w", svc.Name(), err)
-			}
-			if found {
-				svcLogger.Info("♻️  Reusing service", "name", svc.Name())
-				e.mu.Lock()
-				e.reused[svc.Identifier()] = true
-				for k, v := range discoveredProps {
-					e.properties[k] = v
-				}
-				e.mu.Unlock()
-				close(e.signals[svc.Name()])
-				return nil
-			}
-
-			// 3. Start service
-			props, err := svc.Start(pCtx, svcEnvCtx)
-			if err != nil {
-				return fmt.Errorf("failed to start service %s: %w", svc.Name(), err)
-			}
-
-			// 4. Update environment and signal completion
-			e.mu.Lock()
-			e.started[svc.Name()] = true
-			for k, v := range props {
-				e.properties[k] = v
-			}
-			e.mu.Unlock()
-
-			if err := e.discovery.Publish(pCtx, svc, props.snapshot()); err != nil {
-				return fmt.Errorf("failed to publish service %s: %w", svc.Name(), err)
-			}
-
-			close(e.signals[svc.Name()])
-			return nil
-		})
+		g.Go(func() error { return e.startService(pCtx, svc) })
 	}
-
 	if err := g.Wait(); err != nil {
-		// Rollback started services
 		_ = e.Stop(context.Background())
 		return err
 	}
-
-	// Take a snapshot of properties now that all services have started.
-	// The snapshot is passed to hooks so they hold a stable, immutable view
-	// and are not affected by any concurrent mutations or the property-clear
-	// that happens in Stop().
-	e.mu.RLock()
-	propSnapshot := e.properties.snapshot()
-	e.mu.RUnlock()
 
 	e.mu.Lock()
 	e.state = stateRunning
 	e.mu.Unlock()
 
+	if err := e.runOnStartHooks(ctx); err != nil {
+		_ = e.Stop(context.Background())
+		return err
+	}
+	return nil
+}
+
+// prepareStart transitions the env to stateStarting under lock, validates
+// configuration, and resets ephemeral runtime state for the upcoming Start.
+// Returns an error (without changing state) if the env is not idle or if
+// service configuration is invalid.
+func (e *Env) prepareStart() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.state != stateIdle {
+		return fmt.Errorf("environment %s is already running or starting", e.name)
+	}
+	if err := e.validateServiceNames(); err != nil {
+		return err
+	}
+	if err := e.validateDependencies(); err != nil {
+		return err
+	}
+
+	e.state = stateStarting
+
+	// Create discovery from the factory so default envs get an isolated
+	// MapStore per Start() while explicitly-shared providers are reused.
+	e.discovery = e.newDiscovery()
+	e.properties = make(Properties)
+	e.reused = make(map[string]bool)
+	e.started = make(map[string]bool)
+	e.signals = make(map[string]chan struct{}, len(e.services))
+	for _, s := range e.services {
+		e.signals[s.Name()] = make(chan struct{})
+	}
+	return nil
+}
+
+func (e *Env) validateServiceNames() error {
+	seen := make(map[string]bool, len(e.services))
+	for _, s := range e.services {
+		if seen[s.Name()] {
+			return fmt.Errorf("duplicate service name: %s", s.Name())
+		}
+		seen[s.Name()] = true
+	}
+	return nil
+}
+
+// startService runs the full lifecycle for a single service: wait for its
+// declared dependencies to start, try discovery/reuse, otherwise call its
+// Start, then publish properties. Closes the service's signal on completion.
+func (e *Env) startService(pCtx context.Context, svc Service) error {
+	svcLogger := ScopedLogger(e.logger, svc.Name())
+	svcEnvCtx := &envContext{properties: e.properties, mu: &e.mu, logger: svcLogger}
+
+	if err := e.waitForDependencies(pCtx, svc); err != nil {
+		return err
+	}
+
+	discoveredProps, found, err := e.discovery.Discover(pCtx, svc)
+	if err != nil {
+		return fmt.Errorf("discovery failed for service %s: %w", svc.Name(), err)
+	}
+	if found {
+		svcLogger.Info("♻️  Reusing service", "name", svc.Name())
+		e.mu.Lock()
+		e.reused[svc.Identifier()] = true
+		for k, v := range discoveredProps {
+			e.properties[k] = v
+		}
+		e.mu.Unlock()
+		close(e.signals[svc.Name()])
+		return nil
+	}
+
+	props, err := svc.Start(pCtx, svcEnvCtx)
+	if err != nil {
+		return fmt.Errorf("failed to start service %s: %w", svc.Name(), err)
+	}
+
+	e.mu.Lock()
+	e.started[svc.Name()] = true
+	for k, v := range props {
+		e.properties[k] = v
+	}
+	e.mu.Unlock()
+
+	if err := e.discovery.Publish(pCtx, svc, props.snapshot()); err != nil {
+		return fmt.Errorf("failed to publish service %s: %w", svc.Name(), err)
+	}
+
+	close(e.signals[svc.Name()])
+	return nil
+}
+
+func (e *Env) waitForDependencies(pCtx context.Context, svc Service) error {
+	for _, depName := range svc.Dependencies() {
+		sig, ok := e.signals[depName]
+		if !ok {
+			return fmt.Errorf("service %s depends on unknown service %s", svc.Name(), depName)
+		}
+		select {
+		case <-sig:
+		case <-pCtx.Done():
+			return pCtx.Err()
+		}
+	}
+	return nil
+}
+
+// runOnStartHooks invokes all registered LifecycleHook.OnStart callbacks with
+// a stable property snapshot taken after all services started. The snapshot
+// shields hooks from any later property mutations (notably, the clear in Stop).
+func (e *Env) runOnStartHooks(ctx context.Context) error {
+	e.mu.RLock()
+	propSnapshot := e.properties.snapshot()
+	e.mu.RUnlock()
+
 	envCtx := &envContext{properties: propSnapshot, mu: &e.mu, logger: e.logger}
 	for _, hook := range e.hooks {
 		if err := hook.OnStart(ctx, envCtx); err != nil {
-			_ = e.Stop(context.Background())
 			return fmt.Errorf("lifecycle hook OnStart failed: %w", err)
 		}
 	}
-
 	return nil
 }
 
