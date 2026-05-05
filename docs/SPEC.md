@@ -17,17 +17,19 @@ The framework is designed for integration tests that need real services (databas
 ## Project Layout
 
 ```
-pkg/testrig/             — core framework (Env, Service, DiscoveryStore, InjectIntoEnv)
-pkg/testkits/            — testcontainers-based service implementations
-  ├── postgres/          — PostgreSQL service + helper testkit
-  └── wiremock/          — WireMock service + helper testkit
-internal/dag/            — directed-acyclic-graph cycle validation
-internal/testutil/       — shared test helpers (e.g. MockEnvContext)
-examples/                — runnable integration examples
-  ├── viper-app/         — Viper config-injection example
-  └── koanf-app/         — koanf config-injection example
-docs/                    — specs and plans
+pkg/testrig/                — core framework (Env, Service, DiscoveryStore, InjectIntoEnv)
+pkg/testrig/testkits/       — pre-configured Testkits (each implements testrig.Service)
+  ├── postgres/             — PostgreSQL Testkit
+  └── wiremock/             — WireMock Testkit
+internal/dag/               — directed-acyclic-graph cycle validation
+internal/testutil/          — shared test helpers (e.g. MockEnvContext)
+examples/                   — runnable integration examples
+  ├── viper-app/            — Viper config-injection example
+  └── koanf-app/            — koanf config-injection example
+docs/                       — specs and plans
 ```
+
+> **Layout invariant:** every package a user imports lives under `pkg/testrig/...`. There is one branded import root.
 
 ## Core Concepts
 
