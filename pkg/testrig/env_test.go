@@ -182,9 +182,9 @@ func TestEnv_StateTransitions(t *testing.T) {
 		t.Errorf("Second stop should be safe/no-op, got error: %v", err)
 	}
 
-	// 4. Restart
-	// NOTE: Because we are restarting, the service WILL be reused since we haven't cleaned up yet.
-	// This is actually a good test of reuse.
+	// 4. Restart on the same Env instance must succeed end-to-end. Stop
+	// unpublishes everything, so this Start runs a fresh service lifecycle
+	// (no reuse) — runState was released and is allocated again from scratch.
 	if err := env.Start(context.Background()); err != nil {
 		t.Errorf("Restart failed: %v", err)
 	}
