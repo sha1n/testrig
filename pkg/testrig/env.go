@@ -270,9 +270,6 @@ func NewCrossProcessDiscovery() DiscoveryProvider {
 }
 
 func (d *envDiscovery) Discover(ctx context.Context, svc Service) (Properties, bool, error) {
-	if d.store == nil {
-		panic("testrig: envDiscovery requires a DiscoveryStore; use NewDiscovery() or NewCrossProcessDiscovery()")
-	}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	val, ok := d.store.Load(key)
 	if !ok || val == "" {
@@ -315,9 +312,6 @@ func livenessCheck(props Properties, svcName string) bool {
 }
 
 func (d *envDiscovery) Publish(ctx context.Context, svc Service, props Properties) error {
-	if d.store == nil {
-		panic("testrig: envDiscovery requires a DiscoveryStore; use NewDiscovery() or NewCrossProcessDiscovery()")
-	}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	data, err := json.Marshal(props)
 	if err != nil {
@@ -332,9 +326,6 @@ func (d *envDiscovery) Publish(ctx context.Context, svc Service, props Propertie
 // Unpublish removes the service from the discovery registry.
 // Called after a service is explicitly stopped to prevent dead-reuse.
 func (d *envDiscovery) Unpublish(ctx context.Context, svc Service) error {
-	if d.store == nil {
-		panic("testrig: envDiscovery requires a DiscoveryStore; use NewDiscovery() or NewCrossProcessDiscovery()")
-	}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	if err := d.store.Delete(key); err != nil {
 		return fmt.Errorf("failed to delete discovery data for %s: %w", svc.Name(), err)
