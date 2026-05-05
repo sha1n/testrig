@@ -69,9 +69,9 @@ func (c *envContext) Logger() *slog.Logger {
 // Env manages a set of Service implementations, handling their lifecycle,
 // dependency resolution, and property propagation.
 //
-// All builder methods (With, WithDiscovery, WithLogger, WithHooks) must be
-// called before Start(). Calling builders concurrently with Start() or while
-// the env is running is a programmer error and results in undefined behavior.
+// Construct via New(opts...). All configuration is applied at construction
+// time; mutating an Env after construction (or concurrently with Start) is
+// a programmer error.
 type Env struct {
 	name       string
 	services   []Service
@@ -88,85 +88,118 @@ type Env struct {
 	hooks        []LifecycleHook
 }
 
-// New creates a new Env with isolation-safe defaults: in-process MapStore
-// for discovery (no OS env pollution) and slog.Default() logger.
-func New() *Env {
-	return &Env{
+// envConfig holds the result of applying Options before Env construction.
+type envConfig struct {
+	name         string
+	services     []Service
+	newDiscovery func() DiscoveryProvider
+	logger       *slog.Logger
+	hooks        []LifecycleHook
+}
+
+// Option configures an Env at construction time. Options are applied in order
+// by New; an option may return an error to reject invalid input.
+type Option func(*envConfig) error
+
+// New creates a new Env with isolation-safe defaults (in-process MapStore for
+// discovery, slog.Default() logger), then applies the given options. Returns
+// an error if any option rejects its input.
+func New(opts ...Option) (*Env, error) {
+	cfg := envConfig{
 		name:         "testenv",
+		newDiscovery: func() DiscoveryProvider { return NewDiscovery(NewMapStore()) },
+		logger:       slog.Default(),
+	}
+	for _, opt := range opts {
+		if err := opt(&cfg); err != nil {
+			return nil, err
+		}
+	}
+	return &Env{
+		name:         cfg.name,
+		services:     cfg.services,
 		properties:   make(Properties),
 		reused:       make(map[string]bool),
 		started:      make(map[string]bool),
 		signals:      make(map[string]chan struct{}),
 		state:        stateIdle,
-		newDiscovery: func() DiscoveryProvider { return NewDiscovery(NewMapStore()) },
-		logger:       slog.Default(),
-	}
+		newDiscovery: cfg.newDiscovery,
+		logger:       cfg.logger,
+		hooks:        cfg.hooks,
+	}, nil
 }
 
-// shallowCopy returns a new *Env with all configuration fields copied.
-// The mutex and ephemeral runtime state (properties, reused, started, signals)
-// are NOT copied — they are always freshly initialised on Start(). This avoids
-// copying a sync.RWMutex (which would be a data-race and a lint error).
-func (e *Env) shallowCopy() *Env {
-	return &Env{
-		name:         e.name,
-		services:     e.services,
-		newDiscovery: e.newDiscovery,
-		logger:       e.logger,
-		hooks:        e.hooks,
-		// mu, state, properties, reused, started, signals, discovery — zero values are correct.
-		// discovery is set by Start() from newDiscovery.
+// MustNew is like New but panics on error. Convenient for tests and other
+// places where invalid configuration is a static, programmer-checked condition.
+func MustNew(opts ...Option) *Env {
+	env, err := New(opts...)
+	if err != nil {
+		panic(err)
 	}
+	return env
 }
 
-// WithName sets a custom name for the environment, used in logs and error messages.
-// Returns a new *Env; the receiver is not modified.
-// Panics if name is empty.
-func (e *Env) WithName(name string) *Env {
-	if name == "" {
-		panic("testrig: WithName requires a non-empty name")
-	}
-	cp := e.shallowCopy()
-	cp.name = name
-	return cp
-}
-
-// WithDiscovery replaces the discovery provider.
-// Returns a new *Env; the receiver is not modified.
-// Panics if d is nil.
-func (e *Env) WithDiscovery(d DiscoveryProvider) *Env {
-	if d == nil {
-		panic("testrig: WithDiscovery requires a non-nil DiscoveryProvider")
-	}
-	cp := e.shallowCopy()
-	cp.newDiscovery = func() DiscoveryProvider { return d }
-	return cp
-}
-
-// WithLogger replaces the logger for the environment.
-// Returns a new *Env; the receiver is not modified.
-// Panics if logger is nil.
-func (e *Env) WithLogger(logger *slog.Logger) *Env {
-	if logger == nil {
-		panic("testrig: WithLogger requires a non-nil *slog.Logger")
-	}
-	cp := e.shallowCopy()
-	cp.logger = logger
-	return cp
-}
-
-// WithHooks appends lifecycle hooks to the environment (accumulative).
-// Returns a new *Env; the receiver is not modified.
-// Panics if any hook is nil.
-func (e *Env) WithHooks(hooks ...LifecycleHook) *Env {
-	for i, h := range hooks {
-		if h == nil {
-			panic(fmt.Sprintf("testrig: WithHooks received a nil LifecycleHook at index %d", i))
+// WithName sets a custom name for the environment, used in logs and error
+// messages. Returns an error if name is empty.
+func WithName(name string) Option {
+	return func(c *envConfig) error {
+		if name == "" {
+			return fmt.Errorf("testrig: WithName requires a non-empty name")
 		}
+		c.name = name
+		return nil
 	}
-	cp := e.shallowCopy()
-	cp.hooks = append(append([]LifecycleHook(nil), e.hooks...), hooks...)
-	return cp
+}
+
+// WithDiscovery replaces the discovery provider. Returns an error if d is nil.
+func WithDiscovery(d DiscoveryProvider) Option {
+	return func(c *envConfig) error {
+		if d == nil {
+			return fmt.Errorf("testrig: WithDiscovery requires a non-nil DiscoveryProvider")
+		}
+		c.newDiscovery = func() DiscoveryProvider { return d }
+		return nil
+	}
+}
+
+// WithLogger replaces the logger for the environment. Returns an error if
+// logger is nil.
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *envConfig) error {
+		if logger == nil {
+			return fmt.Errorf("testrig: WithLogger requires a non-nil *slog.Logger")
+		}
+		c.logger = logger
+		return nil
+	}
+}
+
+// WithHooks appends lifecycle hooks (accumulative across calls). Returns an
+// error if any hook is nil.
+func WithHooks(hooks ...LifecycleHook) Option {
+	return func(c *envConfig) error {
+		for i, h := range hooks {
+			if h == nil {
+				return fmt.Errorf("testrig: WithHooks received a nil LifecycleHook at index %d", i)
+			}
+		}
+		c.hooks = append(c.hooks, hooks...)
+		return nil
+	}
+}
+
+// With appends services (accumulative across calls). Returns an error if any
+// service is nil.
+func With(services ...Service) Option {
+	return func(c *envConfig) error {
+		for i, s := range services {
+			if s == nil {
+				return fmt.Errorf("testrig: With received a nil Service at index %d", i)
+			}
+		}
+		c.services = append(c.services, services...)
+		return nil
+	}
 }
 
 // envDiscovery is a DiscoveryProvider backed by a DiscoveryStore.
@@ -277,20 +310,6 @@ func (e *Env) Properties() Properties {
 		p[k] = v
 	}
 	return p
-}
-
-// With appends one or more services to the environment (accumulative).
-// Returns a new *Env; the receiver is not modified.
-// Panics if any service is nil.
-func (e *Env) With(services ...Service) *Env {
-	for i, s := range services {
-		if s == nil {
-			panic(fmt.Sprintf("testrig: With received a nil Service at index %d", i))
-		}
-	}
-	cp := e.shallowCopy()
-	cp.services = append(append([]Service(nil), e.services...), services...)
-	return cp
 }
 
 func (e *Env) Start(ctx context.Context) error {

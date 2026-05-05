@@ -13,7 +13,7 @@ import (
 func TestViperConfigLoading(t *testing.T) {
 	pg := postgres.New("pg").WithDatabase("viper_db")
 
-	env := testrig.New().With(pg)
+	env := testrig.MustNew(testrig.With(pg))
 	require.NoError(t, env.Start(context.Background()))
 	t.Cleanup(func() { require.NoError(t, env.Stop(context.Background())) })
 

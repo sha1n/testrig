@@ -83,15 +83,17 @@ Read-only handle into the environment, passed to `Service.Start`. Implementation
 
 ### `Env`
 
-The orchestrator. Builder-style API; all configuration must be set before `Start`.
+The orchestrator. Constructed via `New(opts ...Option) (*Env, error)` (or `MustNew` for tests where invalid configuration is a programmer-checked condition). All configuration is applied at construction; the resulting `*Env` is not further mutated until `Start` is called.
 
 ```go
-env := testrig.New().
-    WithName("integration-tests").
-    WithLogger(myLogger).
-    WithDiscovery(testrig.NewCrossProcessDiscovery()).
-    WithHooks(myHook).
-    With(svc1, svc2, svc3)
+env, err := testrig.New(
+    testrig.WithName("integration-tests"),
+    testrig.WithLogger(myLogger),
+    testrig.WithDiscovery(testrig.NewCrossProcessDiscovery()),
+    testrig.WithHooks(myHook),
+    testrig.With(svc1, svc2, svc3),
+)
+if err != nil { /* ... */ }
 
 if err := env.Start(ctx); err != nil { /* ... */ }
 defer env.Stop(context.Background())
@@ -99,18 +101,26 @@ defer env.Stop(context.Background())
 props := env.Properties()
 ```
 
-#### Builder methods
+#### Options
 
-All builders return a **new `*Env`**; the receiver is not mutated. All builders **panic on nil arguments** (programmer-error contract).
+All options validate their input and return an error from `New` rather than panicking. `MustNew` wraps `New` and panics on error — convenient when configuration is static.
 
-| Method | Semantics |
+| Option | Semantics |
 |---|---|
-| `New()` | Defaults: name `"testenv"`, in-process `MapStore` discovery (per-`Start()` isolation), `slog.Default()` logger, no hooks, no services. |
-| `WithName(string)` | Last-wins. Panics on empty. |
-| `WithDiscovery(DiscoveryProvider)` | Last-wins. Panics on nil. |
-| `WithLogger(*slog.Logger)` | Last-wins. Panics on nil. |
-| `WithHooks(...LifecycleHook)` | **Accumulative** — appends to existing hooks. Panics if any hook is nil. |
-| `With(...Service)` | **Accumulative** — appends to existing services. Panics if any service is nil. |
+| `New()` (no options) | Defaults: name `"testenv"`, in-process `MapStore` discovery (per-`Start()` isolation), `slog.Default()` logger, no hooks, no services. |
+| `WithName(string)` | Last-wins. Errors on empty. |
+| `WithDiscovery(DiscoveryProvider)` | Last-wins. Errors on nil. |
+| `WithLogger(*slog.Logger)` | Last-wins. Errors on nil. |
+| `WithHooks(...LifecycleHook)` | **Accumulative** — appends across calls. Errors if any hook is nil. |
+| `With(...Service)` | **Accumulative** — appends across calls. Errors if any service is nil. |
+
+To build multiple envs from a shared configuration, compose options as a slice:
+
+```go
+baseOpts := []testrig.Option{testrig.With(commonSvc)}
+envA := testrig.MustNew(append(baseOpts, testrig.WithName("A"))...)
+envB := testrig.MustNew(append(baseOpts, testrig.WithName("B"))...)
+```
 
 #### Lifecycle methods
 
