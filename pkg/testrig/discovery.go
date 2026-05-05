@@ -8,6 +8,22 @@ import (
 	"time"
 )
 
+// DiscoveryProvider abstracts how a Service published by one Env (or one
+// process) becomes discoverable to a later Env. Implementations may be
+// in-process, OS-environment-backed, or backed by an external store.
+type DiscoveryProvider interface {
+	// Discover attempts to locate a running service matching svc.Identifier()
+	// and return its previously-published properties. The bool reports
+	// whether a match was found (and is alive, where applicable).
+	Discover(ctx context.Context, svc Service) (Properties, bool, error)
+	// Publish records that svc is now running with the given properties so
+	// future Discover calls can return them.
+	Publish(ctx context.Context, svc Service, props Properties) error
+	// Unpublish removes svc from the registry. Env.Stop calls this for
+	// every service it stopped, so future envs do not reuse a stale entry.
+	Unpublish(ctx context.Context, svc Service) error
+}
+
 // envDiscovery is a DiscoveryProvider backed by a DiscoveryStore.
 // Use NewDiscovery or NewCrossProcessDiscovery to create instances.
 type envDiscovery struct {

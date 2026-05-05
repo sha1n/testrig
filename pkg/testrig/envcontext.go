@@ -6,6 +6,26 @@ import (
 	"time"
 )
 
+// EnvContext provides read-only access to properties of started services and
+// the per-service scoped logger. Service.Start and LifecycleHook callbacks
+// receive one. Reads are safe to call concurrently with sibling services
+// publishing properties.
+type EnvContext interface {
+	// Get returns the value for the given key, or "" and false if absent.
+	Get(key string) (string, bool)
+	// Int returns the value for the given key parsed as an int.
+	Int(key string) (int, error)
+	// Bool returns the value for the given key parsed as a bool.
+	Bool(key string) (bool, error)
+	// Duration returns the value for the given key parsed as a time.Duration.
+	Duration(key string) (time.Duration, error)
+	// Properties returns a copy of all properties currently visible.
+	Properties() Properties
+	// Logger returns a logger scoped for the current call site (per-service
+	// during Start, env-level during hooks).
+	Logger() *slog.Logger
+}
+
 // envContext is the EnvContext implementation passed to Service.Start and
 // LifecycleHook callbacks. It borrows the parent Env's RWMutex via pointer
 // so reads on `properties` synchronize with concurrent writes by sibling
