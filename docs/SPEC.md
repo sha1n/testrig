@@ -17,7 +17,7 @@ The framework is designed for integration tests that need real services (databas
 ## Project Layout
 
 ```
-pkg/testrig/                — core framework (Env, Service, DiscoveryStore, InjectIntoEnv)
+pkg/testrig/                — core framework (Env, Service, DiscoveryStore, SetEnvVars)
 pkg/testrig/testkits/       — pre-configured Testkits (each implements testrig.Service)
   ├── postgres/             — PostgreSQL Testkit
   └── wiremock/             — WireMock Testkit
@@ -181,10 +181,10 @@ type LifecycleHook interface {
 
 Hooks fire **after** all services in the `Env` have started (and **before** Stop is called for shutdown). They receive a stable, immutable `EnvContext` snapshot taken before `properties` is cleared, so `OnStop` sees the same view as `OnStart`. An `OnStart` failure aborts `Start` and triggers full `Stop`. `OnStop` failures are returned (first wins; subsequent are logged).
 
-### `InjectIntoEnv`
+### `SetEnvVars`
 
 ```go
-func InjectIntoEnv(t *testing.T, props Properties)
+func SetEnvVars(t *testing.T, props Properties)
 ```
 
 Sets each property as an OS environment variable using `t.Setenv`, with deterministic (sorted) order. Cleanup is automatic via the `*testing.T`. Panics if the test has already called `t.Parallel()`. For parallel-safe tests, pass `env.Properties()` directly to your config library's API instead.
@@ -216,7 +216,7 @@ k := koanf.New(".")
 k.Load(confmap.Provider(props, "."), nil)
 
 // 4. OS env — sequential tests only (uses t.Setenv).
-testrig.InjectIntoEnv(t, props)
+testrig.SetEnvVars(t, props)
 ```
 
 See `examples/viper-app` and `examples/koanf-app` for full patterns.

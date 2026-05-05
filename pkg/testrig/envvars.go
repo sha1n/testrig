@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// InjectIntoEnv sets the properties as OS environment variables and automatically
+// SetEnvVars sets the properties as OS environment variables and automatically
 // restores the original values when the test ends. Keys are processed in sorted
 // order for deterministic behavior.
 //
@@ -13,7 +13,7 @@ import (
 // has already called t.Parallel(). For parallel-safe tests, pass env.Properties()
 // directly to your config library's native API (e.g., viper.Set, koanf confmap.Provider)
 // instead of mutating OS environment variables.
-func InjectIntoEnv(t *testing.T, props Properties) {
+func SetEnvVars(t *testing.T, props Properties) {
 	t.Helper()
 
 	keys := make([]string, 0, len(props))
