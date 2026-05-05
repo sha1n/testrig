@@ -387,10 +387,10 @@ func (e *Env) prepareStart() error {
 	if e.state != stateIdle {
 		return fmt.Errorf("environment %s is %s, must be idle to start", e.name, e.state)
 	}
-	if err := e.validateServiceNames(); err != nil {
+	if err := validateServiceNames(e.services); err != nil {
 		return err
 	}
-	if err := e.validateDependencies(); err != nil {
+	if err := validateDependencies(e.services); err != nil {
 		return err
 	}
 
@@ -410,9 +410,12 @@ func (e *Env) prepareStart() error {
 	return nil
 }
 
-func (e *Env) validateServiceNames() error {
-	seen := make(map[string]bool, len(e.services))
-	for _, s := range e.services {
+// validateServiceNames returns an error if any two services share a Name,
+// since Name is the addressable handle used in dependency edges and the
+// runState signals map.
+func validateServiceNames(services []Service) error {
+	seen := make(map[string]bool, len(services))
+	for _, s := range services {
 		if seen[s.Name()] {
 			return fmt.Errorf("duplicate service name: %s", s.Name())
 		}
@@ -617,9 +620,11 @@ func (e *Env) runOnStopHooks(ctx context.Context, run *runState) error {
 	return errors.Join(errs...)
 }
 
-func (e *Env) validateDependencies() error {
-	nodes := make([]dag.Node, len(e.services))
-	for i, s := range e.services {
+// validateDependencies wraps the generic DAG check so error messages speak
+// in service vocabulary rather than node vocabulary.
+func validateDependencies(services []Service) error {
+	nodes := make([]dag.Node, len(services))
+	for i, s := range services {
 		nodes[i] = serviceNode{s}
 	}
 
