@@ -191,7 +191,7 @@ func TestTestkit_DB_PingsAndReturnsConnection(t *testing.T) {
 	if db == nil {
 		t.Fatal("Expected non-nil *sql.DB")
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.Ping(); err != nil {
 		t.Errorf("Ping on returned DB failed: %v", err)

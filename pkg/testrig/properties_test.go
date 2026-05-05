@@ -48,4 +48,3 @@ func TestProperties_TypeSafeHelpers(t *testing.T) {
 		t.Error("Duration() should have failed for invalid value")
 	}
 }
-
