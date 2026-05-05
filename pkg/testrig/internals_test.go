@@ -41,6 +41,26 @@ func TestMapStore_ZeroValue_LoadOnly(t *testing.T) {
 	}
 }
 
+// --- envState String ---
+
+func TestEnvState_String(t *testing.T) {
+	cases := []struct {
+		state envState
+		want  string
+	}{
+		{stateIdle, "idle"},
+		{stateStarting, "starting"},
+		{stateRunning, "running"},
+		{stateStopping, "stopping"},
+		{envState(99), "envState(99)"}, // unknown values surface as such, not silently as "0"
+	}
+	for _, c := range cases {
+		if got := c.state.String(); got != c.want {
+			t.Errorf("envState(%d).String() = %q, want %q", c.state, got, c.want)
+		}
+	}
+}
+
 // --- envDiscovery zero-value ---
 
 func TestEnvDiscovery_ZeroValue_Panics(t *testing.T) {

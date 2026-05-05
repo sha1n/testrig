@@ -35,6 +35,21 @@ const (
 	stateStopping
 )
 
+func (s envState) String() string {
+	switch s {
+	case stateIdle:
+		return "idle"
+	case stateStarting:
+		return "starting"
+	case stateRunning:
+		return "running"
+	case stateStopping:
+		return "stopping"
+	default:
+		return fmt.Sprintf("envState(%d)", int(s))
+	}
+}
+
 func (c *envContext) Get(key string) (string, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -372,7 +387,7 @@ func (e *Env) prepareStart() error {
 	defer e.mu.Unlock()
 
 	if e.state != stateIdle {
-		return fmt.Errorf("environment %s is already running or starting", e.name)
+		return fmt.Errorf("environment %s is %s, must be idle to start", e.name, e.state)
 	}
 	if err := e.validateServiceNames(); err != nil {
 		return err
