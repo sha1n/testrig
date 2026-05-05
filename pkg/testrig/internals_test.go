@@ -1,0 +1,29 @@
+// Package testrig — internal tests for zero-value safety of unexported types.
+// These tests use package testrig (not testrig_test) so they can access
+// unexported types directly.
+package testrig
+
+import (
+	"testing"
+)
+
+// --- mapStore zero-value ---
+
+func TestMapStore_ZeroValue_Safe(t *testing.T) {
+	s := &mapStore{}
+	if err := s.Store("k", "v"); err != nil {
+		t.Fatalf("Store on zero-value mapStore failed: %v", err)
+	}
+	val, ok := s.Load("k")
+	if !ok || val != "v" {
+		t.Errorf("Expected k=v, got ok=%v val=%q", ok, val)
+	}
+}
+
+func TestMapStore_ZeroValue_LoadOnly(t *testing.T) {
+	s := &mapStore{}
+	_, ok := s.Load("missing")
+	if ok {
+		t.Error("Expected ok=false on zero-value mapStore")
+	}
+}
