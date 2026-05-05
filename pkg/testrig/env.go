@@ -98,7 +98,7 @@ func New() *Env {
 		started:      make(map[string]bool),
 		signals:      make(map[string]chan struct{}),
 		state:        stateIdle,
-		newDiscovery: func() DiscoveryProvider { return NewEnvDiscovery(NewMapStore()) },
+		newDiscovery: func() DiscoveryProvider { return NewDiscovery(NewMapStore()) },
 		logger:       slog.Default(),
 	}
 }
@@ -170,17 +170,17 @@ func (e *Env) WithHooks(hooks ...LifecycleHook) *Env {
 }
 
 // envDiscovery is a DiscoveryProvider backed by a DiscoveryStore.
-// Use NewEnvDiscovery or NewCrossProcessDiscovery to create instances.
+// Use NewDiscovery or NewCrossProcessDiscovery to create instances.
 type envDiscovery struct {
 	store DiscoveryStore
 }
 
-// NewEnvDiscovery creates a DiscoveryProvider backed by the given store.
+// NewDiscovery creates a DiscoveryProvider backed by the given store.
 // Returns a DiscoveryProvider; the concrete type is an implementation detail.
 // Panics if store is nil.
-func NewEnvDiscovery(store DiscoveryStore) DiscoveryProvider {
+func NewDiscovery(store DiscoveryStore) DiscoveryProvider {
 	if store == nil {
-		panic("testrig: NewEnvDiscovery requires a non-nil DiscoveryStore")
+		panic("testrig: NewDiscovery requires a non-nil DiscoveryStore")
 	}
 	return &envDiscovery{store: store}
 }
@@ -188,12 +188,12 @@ func NewEnvDiscovery(store DiscoveryStore) DiscoveryProvider {
 // NewCrossProcessDiscovery creates a DiscoveryProvider backed by OS environment
 // variables, suitable for cross-process service reuse.
 func NewCrossProcessDiscovery() DiscoveryProvider {
-	return NewEnvDiscovery(NewOsEnvStore())
+	return NewDiscovery(NewOsEnvStore())
 }
 
 func (d *envDiscovery) Discover(ctx context.Context, svc Service) (Properties, bool, error) {
 	if d.store == nil {
-		panic("testrig: envDiscovery requires a DiscoveryStore; use NewEnvDiscovery() or NewCrossProcessDiscovery()")
+		panic("testrig: envDiscovery requires a DiscoveryStore; use NewDiscovery() or NewCrossProcessDiscovery()")
 	}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	val, ok := d.store.Load(key)
@@ -238,7 +238,7 @@ func livenessCheck(props Properties, svcName string) bool {
 
 func (d *envDiscovery) Publish(ctx context.Context, svc Service, props Properties) error {
 	if d.store == nil {
-		panic("testrig: envDiscovery requires a DiscoveryStore; use NewEnvDiscovery() or NewCrossProcessDiscovery()")
+		panic("testrig: envDiscovery requires a DiscoveryStore; use NewDiscovery() or NewCrossProcessDiscovery()")
 	}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	data, err := json.Marshal(props)
@@ -255,7 +255,7 @@ func (d *envDiscovery) Publish(ctx context.Context, svc Service, props Propertie
 // Called after a service is explicitly stopped to prevent dead-reuse.
 func (d *envDiscovery) Unpublish(ctx context.Context, svc Service) error {
 	if d.store == nil {
-		panic("testrig: envDiscovery requires a DiscoveryStore; use NewEnvDiscovery() or NewCrossProcessDiscovery()")
+		panic("testrig: envDiscovery requires a DiscoveryStore; use NewDiscovery() or NewCrossProcessDiscovery()")
 	}
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
 	if err := d.store.Delete(key); err != nil {

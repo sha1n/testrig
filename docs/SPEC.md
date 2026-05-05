@@ -140,8 +140,8 @@ type DiscoveryProvider interface {
 ```
 
 Two factories provided:
-- `NewEnvDiscovery(store DiscoveryStore) DiscoveryProvider` — backed by any `DiscoveryStore`.
-- `NewCrossProcessDiscovery() DiscoveryProvider` — convenience: `NewEnvDiscovery(NewOsEnvStore())`.
+- `NewDiscovery(store DiscoveryStore) DiscoveryProvider` — backed by any `DiscoveryStore`.
+- `NewCrossProcessDiscovery() DiscoveryProvider` — convenience: `NewDiscovery(NewOsEnvStore())`.
 
 Discovery key prefix: `TESTRIG_SERVICE_<Identifier>`.
 

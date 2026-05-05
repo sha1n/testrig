@@ -195,7 +195,7 @@ func TestEnv_Start_ReuseWithProperties(t *testing.T) {
 
 	// Both envs share the same MapStore so env2 can discover what env1 published.
 	sharedStore := testrig.NewMapStore()
-	sharedDiscovery := testrig.NewEnvDiscovery(sharedStore)
+	sharedDiscovery := testrig.NewDiscovery(sharedStore)
 
 	env := testrig.New().With(s1).WithDiscovery(sharedDiscovery)
 
@@ -787,7 +787,7 @@ func TestEnv_Start_ProvidesPerServiceScopedLogger(t *testing.T) {
 
 func TestEnvDiscovery_WithMapStore_PublishAndDiscover(t *testing.T) {
 	store := testrig.NewMapStore()
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "map-svc", properties: testrig.Properties{"k": "v"}}
 
 	if err := d.Publish(context.Background(), svc, svc.properties); err != nil {
@@ -807,7 +807,7 @@ func TestEnvDiscovery_WithMapStore_PublishAndDiscover(t *testing.T) {
 
 func TestEnvDiscovery_WithMapStore_Unpublish(t *testing.T) {
 	store := testrig.NewMapStore()
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "map-unpub"}
 
 	_ = d.Publish(context.Background(), svc, testrig.Properties{"k": "v"})
@@ -824,7 +824,7 @@ func TestEnvDiscovery_WithMapStore_Unpublish(t *testing.T) {
 
 func TestEnvDiscovery_WithMapStore_Discover_NotFound(t *testing.T) {
 	store := testrig.NewMapStore()
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "missing"}
 
 	props, found, err := d.Discover(context.Background(), svc)
@@ -841,7 +841,7 @@ func TestEnvDiscovery_WithMapStore_Discover_NotFound(t *testing.T) {
 
 func TestEnvDiscovery_WithMapStore_Discover_InvalidJSON(t *testing.T) {
 	store := testrig.NewMapStore()
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "bad-json"}
 
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
@@ -863,19 +863,19 @@ func TestNewEnvDiscovery_NilStore_Panics(t *testing.T) {
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("Expected panic from NewEnvDiscovery(nil)")
+			t.Fatal("Expected panic from NewDiscovery(nil)")
 		}
 		msg := fmt.Sprintf("%v", r)
 		if !strings.Contains(msg, "non-nil DiscoveryStore") {
 			t.Errorf("Unexpected panic message: %s", msg)
 		}
 	}()
-	testrig.NewEnvDiscovery(nil)
+	testrig.NewDiscovery(nil)
 }
 
 func TestEnvDiscovery_WithMapStore_Discover_DeadHostPort(t *testing.T) {
 	store := testrig.NewMapStore()
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "dead-svc"}
 
 	deadProps := testrig.Properties{
@@ -905,7 +905,7 @@ func TestEnvDiscovery_WithMapStore_Discover_AliveHostPort(t *testing.T) {
 
 	addr := ln.Addr().(*net.TCPAddr)
 	store := testrig.NewMapStore()
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "live-svc"}
 
 	liveProps := testrig.Properties{
@@ -954,7 +954,7 @@ func (s *mockErrorStore) Delete(key string) error        { return s.deleteErr }
 
 func TestEnvDiscovery_Publish_StoreError(t *testing.T) {
 	store := &mockErrorStore{storeErr: errors.New("store-fail")}
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "err-svc"}
 
 	err := d.Publish(context.Background(), svc, testrig.Properties{"k": "v"})
@@ -971,7 +971,7 @@ func TestEnvDiscovery_Publish_StoreError(t *testing.T) {
 
 func TestEnvDiscovery_Unpublish_DeleteError(t *testing.T) {
 	store := &mockErrorStore{deleteErr: errors.New("delete-fail")}
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "del-err-svc"}
 
 	err := d.Unpublish(context.Background(), svc)
@@ -988,7 +988,7 @@ func TestEnvDiscovery_Unpublish_DeleteError(t *testing.T) {
 
 func TestEnvDiscovery_EmptyStringTreatedAsNotFound(t *testing.T) {
 	store := testrig.NewMapStore()
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "empty-val"}
 
 	key := "TESTRIG_SERVICE_" + svc.Identifier()
@@ -1050,7 +1050,7 @@ func TestEnv_Start_DuplicateServiceName(t *testing.T) {
 
 func TestEnvDiscovery_LivenessCheck_IgnoresContextDeadline(t *testing.T) {
 	store := testrig.NewMapStore()
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "deadline-svc"}
 
 	deadProps := testrig.Properties{
@@ -1081,7 +1081,7 @@ func TestEnvDiscovery_LivenessCheck_IgnoresContextDeadline(t *testing.T) {
 
 func TestEnv_WithDiscovery(t *testing.T) {
 	store := testrig.NewMapStore()
-	d := testrig.NewEnvDiscovery(store)
+	d := testrig.NewDiscovery(store)
 	svc := &MockService{name: "wd-svc", properties: testrig.Properties{"k": "v"}}
 
 	env := testrig.New().WithDiscovery(d).With(svc)
@@ -1115,8 +1115,8 @@ func TestEnv_WithDiscovery_NilPanics(t *testing.T) {
 func TestEnv_WithDiscovery_CalledTwice_LastWins(t *testing.T) {
 	store1 := testrig.NewMapStore()
 	store2 := testrig.NewMapStore()
-	d1 := testrig.NewEnvDiscovery(store1)
-	d2 := testrig.NewEnvDiscovery(store2)
+	d1 := testrig.NewDiscovery(store1)
+	d2 := testrig.NewDiscovery(store2)
 	svc := &MockService{name: "last-wins", properties: testrig.Properties{"k": "v"}}
 
 	env := testrig.New().WithDiscovery(d1).WithDiscovery(d2).With(svc)
@@ -1172,7 +1172,7 @@ func TestEnv_DefaultDiscovery_NoOsEnvMutation(t *testing.T) {
 
 func TestEnv_WithDiscovery_BuilderChain(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	d := testrig.NewEnvDiscovery(testrig.NewMapStore())
+	d := testrig.NewDiscovery(testrig.NewMapStore())
 	svc := &MockService{name: "chain-svc"}
 
 	// Verify builder chain returns *Env and works end-to-end.
@@ -1253,13 +1253,13 @@ func TestEnv_Reuse_SharedMapStore(t *testing.T) {
 	sharedStore := testrig.NewMapStore()
 	svc := &MockService{name: "shared-svc", properties: testrig.Properties{"p": "val"}}
 
-	env1 := testrig.New().WithDiscovery(testrig.NewEnvDiscovery(sharedStore)).With(svc)
+	env1 := testrig.New().WithDiscovery(testrig.NewDiscovery(sharedStore)).With(svc)
 	if err := env1.Start(context.Background()); err != nil {
 		t.Fatalf("env1 Start failed: %v", err)
 	}
 	// Keep env1 running so discovery data persists.
 
-	env2 := testrig.New().WithDiscovery(testrig.NewEnvDiscovery(sharedStore)).With(svc)
+	env2 := testrig.New().WithDiscovery(testrig.NewDiscovery(sharedStore)).With(svc)
 	if err := env2.Start(context.Background()); err != nil {
 		t.Fatalf("env2 Start failed: %v", err)
 	}
@@ -1379,7 +1379,7 @@ func TestEnvBuilderBranching_ExplicitDiscoveryShared(t *testing.T) {
 	}
 
 	sharedStore := testrig.NewMapStore()
-	base := testrig.New().WithDiscovery(testrig.NewEnvDiscovery(sharedStore)).With(svcA)
+	base := testrig.New().WithDiscovery(testrig.NewDiscovery(sharedStore)).With(svcA)
 	envA := base.WithName("A")
 	envB := base.WithName("B")
 

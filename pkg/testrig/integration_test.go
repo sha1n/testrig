@@ -139,12 +139,12 @@ func TestIntegration_SharedDiscovery_Reuse(t *testing.T) {
 	sharedStore := testrig.NewMapStore()
 	svc := &MockService{name: "shared-reuse", properties: testrig.Properties{"p": "val"}}
 
-	env1 := testrig.New().WithDiscovery(testrig.NewEnvDiscovery(sharedStore)).With(svc)
+	env1 := testrig.New().WithDiscovery(testrig.NewDiscovery(sharedStore)).With(svc)
 	if err := env1.Start(context.Background()); err != nil {
 		t.Fatalf("env1 Start failed: %v", err)
 	}
 
-	env2 := testrig.New().WithDiscovery(testrig.NewEnvDiscovery(sharedStore)).With(svc)
+	env2 := testrig.New().WithDiscovery(testrig.NewDiscovery(sharedStore)).With(svc)
 	if err := env2.Start(context.Background()); err != nil {
 		t.Fatalf("env2 Start failed: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestIntegration_SharedDiscovery_Unpublish_Prevents_Reuse(t *testing.T) {
 	var started2 bool
 	svc := &MockService{name: "unpub-reuse", properties: testrig.Properties{"p": "val"}}
 
-	env1 := testrig.New().WithDiscovery(testrig.NewEnvDiscovery(sharedStore)).With(svc)
+	env1 := testrig.New().WithDiscovery(testrig.NewDiscovery(sharedStore)).With(svc)
 	if err := env1.Start(context.Background()); err != nil {
 		t.Fatalf("env1 Start failed: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestIntegration_SharedDiscovery_Unpublish_Prevents_Reuse(t *testing.T) {
 	_ = env1.Stop(context.Background())
 
 	svc2 := &MockService{name: "unpub-reuse", properties: testrig.Properties{"p": "fresh"}, onStart: func() { started2 = true }}
-	env2 := testrig.New().WithDiscovery(testrig.NewEnvDiscovery(sharedStore)).With(svc2)
+	env2 := testrig.New().WithDiscovery(testrig.NewDiscovery(sharedStore)).With(svc2)
 	if err := env2.Start(context.Background()); err != nil {
 		t.Fatalf("env2 Start failed: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestIntegration_DiscoveryPublishError(t *testing.T) {
 
 	dp := &mockDiscoveryProvider{
 		publishErr: errors.New("publish-fail"),
-		inner:      testrig.NewEnvDiscovery(testrig.NewMapStore()),
+		inner:      testrig.NewDiscovery(testrig.NewMapStore()),
 	}
 
 	env := testrig.New().WithDiscovery(dp).With(svc)
@@ -225,7 +225,7 @@ func TestIntegration_DiscoveryUnpublishError(t *testing.T) {
 
 	dp := &mockDiscoveryProvider{
 		unpublishErr: errors.New("unpublish-fail"),
-		inner:        testrig.NewEnvDiscovery(testrig.NewMapStore()),
+		inner:        testrig.NewDiscovery(testrig.NewMapStore()),
 	}
 
 	env := testrig.New().WithDiscovery(dp).With(svc)
@@ -396,7 +396,7 @@ func TestIntegration_DiscoverError_FailsStart(t *testing.T) {
 
 	dp := &mockDiscoveryProvider{
 		discoverErr: errors.New("discover-fail"),
-		inner:       testrig.NewEnvDiscovery(testrig.NewMapStore()),
+		inner:       testrig.NewDiscovery(testrig.NewMapStore()),
 	}
 
 	env := testrig.New().WithDiscovery(dp).With(s1)

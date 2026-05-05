@@ -55,8 +55,8 @@ func TestEnvDiscovery_ZeroValue_Panics(t *testing.T) {
 					t.Fatalf("Expected panic from zero-value envDiscovery.%s", name)
 				}
 				msg, _ := r.(string)
-				if !strings.Contains(msg, "NewEnvDiscovery") {
-					t.Errorf("Panic message should mention NewEnvDiscovery, got: %v", r)
+				if !strings.Contains(msg, "NewDiscovery") {
+					t.Errorf("Panic message should mention NewDiscovery, got: %v", r)
 				}
 			}()
 			svc := &internalMockService{name: "svc"}
