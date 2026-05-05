@@ -68,11 +68,18 @@ func (s *mapStore) Delete(key string) error {
 // It is intended for cross-process reuse scenarios where service discovery
 // data must be visible to child processes.
 //
-// Thread-safety caveat: os.Setenv and os.Getenv are not safe for concurrent
-// use on all platforms (known Go issue). This is acceptable because
-// osEnvStore is opt-in for cross-process reuse scenarios where parallel
-// in-process mutation is not expected.
+// The OS environment is process-wide shared state, and the Go language spec
+// does not guarantee that os.Setenv / os.Unsetenv are safe for concurrent
+// use across all platforms. testrig serializes its own access through
+// osEnvMu to give callers a portable concurrency contract; this does not
+// protect against env mutations made outside testrig.
 type osEnvStore struct{}
+
+// osEnvMu serializes all reads and writes to the OS environment performed
+// by osEnvStore. It is package-level because the OS environment is a shared
+// process resource: multiple osEnvStore instances would otherwise race
+// against each other.
+var osEnvMu sync.Mutex
 
 // NewOsEnvStore creates a DiscoveryStore backed by OS environment variables.
 // Returns a DiscoveryStore; the concrete type is an implementation detail.
@@ -82,13 +89,19 @@ func NewOsEnvStore() DiscoveryStore {
 }
 
 func (s *osEnvStore) Load(key string) (string, bool) {
+	osEnvMu.Lock()
+	defer osEnvMu.Unlock()
 	return os.LookupEnv(key)
 }
 
 func (s *osEnvStore) Store(key, value string) error {
+	osEnvMu.Lock()
+	defer osEnvMu.Unlock()
 	return os.Setenv(key, value)
 }
 
 func (s *osEnvStore) Delete(key string) error {
+	osEnvMu.Lock()
+	defer osEnvMu.Unlock()
 	return os.Unsetenv(key)
 }

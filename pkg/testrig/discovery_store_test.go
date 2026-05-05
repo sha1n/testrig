@@ -1,6 +1,7 @@
 package testrig_test
 
 import (
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -184,4 +185,37 @@ func TestOsEnvStore_Store_Overwrite(t *testing.T) {
 	if val != "second" {
 		t.Errorf("Expected second, got %q", val)
 	}
+}
+
+// TestOsEnvStore_ConcurrentAccess hammers Store/Load/Delete from many
+// goroutines. With Go's race detector enabled, an unsynchronized
+// implementation would surface here as data-race reports on os.Setenv /
+// os.Unsetenv (which are not safe for concurrent use on darwin/windows).
+// testrig serializes its own writes through a package-level mutex, so this
+// test must run cleanly under -race.
+func TestOsEnvStore_ConcurrentAccess(t *testing.T) {
+	s := testrig.NewOsEnvStore()
+	const goroutines = 50
+	keys := make([]string, goroutines)
+	for i := 0; i < goroutines; i++ {
+		keys[i] = fmt.Sprintf("TESTRIG_TEST_OSENVSTORE_CONCURRENT_%d", i)
+	}
+	t.Cleanup(func() {
+		for _, k := range keys {
+			_ = os.Unsetenv(k)
+		}
+	})
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(n int) {
+			defer wg.Done()
+			k := keys[n]
+			_ = s.Store(k, "v")
+			_, _ = s.Load(k)
+			_ = s.Delete(k)
+		}(i)
+	}
+	wg.Wait()
 }
