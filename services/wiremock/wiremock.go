@@ -4,11 +4,8 @@ package wiremock
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/sha1n/testrig"
 	"github.com/wiremock/go-wiremock"
@@ -28,11 +25,17 @@ const (
 // to env.With(...). A WireMock instance is reusable across Start/Stop cycles:
 // Stop releases the container so a subsequent Start builds a fresh one.
 // Calling Start without Stop in between returns an error.
+//
+// The service URL is published under "<name>.url" by default; override the
+// key via WithURLPropertyName so tests can wire it directly into the
+// application's expected config key.
 type WireMock struct {
 	name   string
 	image  string
 	tag    string
 	logger *slog.Logger
+
+	urlPropName string
 
 	// Runtime state, populated during Start and cleared by Stop.
 	// container != nil is the canonical "currently running" check.
@@ -43,10 +46,11 @@ type WireMock struct {
 // New creates a WireMock service with default configuration.
 func New(name string) *WireMock {
 	return &WireMock{
-		name:   name,
-		image:  defaultImage,
-		tag:    defaultTag,
-		logger: slog.Default(),
+		name:        name,
+		image:       defaultImage,
+		tag:         defaultTag,
+		logger:      slog.Default(),
+		urlPropName: name + ".url",
 	}
 }
 
@@ -56,19 +60,15 @@ func (t *WireMock) WithImage(image string) *WireMock { t.image = image; return t
 // WithTag sets the Docker image tag.
 func (t *WireMock) WithTag(tag string) *WireMock { t.tag = tag; return t }
 
+// WithURLPropertyName sets the property key under which the service URL is
+// published. Default: "<name>.url".
+func (t *WireMock) WithURLPropertyName(name string) *WireMock {
+	t.urlPropName = name
+	return t
+}
+
 // Name implements testrig.Service.
 func (t *WireMock) Name() string { return t.name }
-
-// Identifier returns a content-addressed identifier over the service config.
-//
-// Name is intentionally NOT part of the hash: two WireMock instances with the
-// same image/tag are equivalent for cross-env reuse regardless of display
-// Name. Use a distinct image or tag to force isolation, not the Name.
-func (t *WireMock) Identifier() string {
-	parts := []string{"wiremock", t.image, t.tag}
-	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return "wiremock:" + hex.EncodeToString(sum[:])
-}
 
 // Dependencies implements testrig.Service. WireMock is a leaf service.
 func (t *WireMock) Dependencies() []string { return nil }
@@ -99,7 +99,7 @@ func (t *WireMock) Start(ctx context.Context, envCtx testrig.EnvContext) (testri
 	t.url = fmt.Sprintf("http://%s:%s", host, port.Port())
 
 	return testrig.Properties{
-		t.name + ".url": t.url,
+		t.urlPropName: t.url,
 	}, nil
 }
 

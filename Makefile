@@ -1,4 +1,4 @@
-PROJECTNAME := "testrig-go"
+PROJECTNAME := "testrig"
 
 # Go related variables.
 GOFILES := $(shell find . -type f -name '*.go' -not -path './vendor/*' -not -path './.git/*')

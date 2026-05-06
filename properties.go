@@ -37,8 +37,8 @@ func (p Properties) Duration(key string) (time.Duration, error) {
 }
 
 // snapshot returns a deep copy of the properties map.
-// Use this whenever a stable, immutable view is required (e.g. hook contexts,
-// discovery publish calls) to prevent aliasing against the live internal map.
+// Use this whenever a stable, immutable view is required (e.g. hook contexts)
+// to prevent aliasing against the live internal map.
 func (p Properties) snapshot() Properties {
 	cp := make(Properties, len(p))
 	for k, v := range p {

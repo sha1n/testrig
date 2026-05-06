@@ -2,9 +2,10 @@
 
 A Go library for orchestrating multi-service test environments. Built on
 [testcontainers-go](https://golang.testcontainers.org/), `testrig` adds
-dependency-aware lifecycle management, property propagation between services,
-and cross-env reuse so the same containerised dependencies can be shared
-between independent `Env` instances.
+dependency-aware lifecycle management and property propagation between
+services so an integration test can declare *what* it needs and let the
+framework handle bringing it up, wiring it into the application's config,
+and tearing it down.
 
 > **Status:** pre-1.0, API not yet stable. Module path: `github.com/sha1n/testrig`.
 
@@ -30,15 +31,19 @@ import (
 )
 
 func TestSomething(t *testing.T) {
-    pg := postgres.New("pg").WithDatabase("appdb")
+    // Publish the DSN directly under the application's expected config key.
+    pg := postgres.New("pg").
+        WithDatabase("appdb").
+        WithDSNPropertyName("DATABASE_URL")
 
     env := testrig.MustNew(testrig.With(pg))
     require.NoError(t, env.Start(context.Background()))
     t.Cleanup(func() { _ = env.Stop(context.Background()) })
 
-    // Properties published by services are addressable by "<name>.<field>".
+    // Properties are ready to merge into your app's config loader.
     props := env.Properties()
-    dsn := props["pg.dsn"]
+    dsn := props["DATABASE_URL"]
+    _ = dsn
 
     // Or use the typed accessor on the service.
     db, err := pg.DB(context.Background())
@@ -55,8 +60,9 @@ func TestSomething(t *testing.T) {
   `Env.Start` brings them up in topological order and rolls back on first error.
 - **Property propagation.** Services publish a `Properties` map (host, port,
   credentials, DSNs); downstream services read it from their `EnvContext`.
-- **Cross-env reuse.** Configure shared discovery and two `Env` instances with
-  the same content-addressed services share a single backing container.
+- **App-aligned property keys.** Each pre-built service supports
+  `WithXxxPropertyName(...)` so its outputs land directly under the
+  application's expected config keys — no bridging step in the test.
 - **Concurrent start/stop.** Independent services start in parallel; stop runs
   in reverse-dependency order. Race-detector clean.
 - **Pluggable injection.** Pass `env.Properties()` to viper, koanf, or any
@@ -64,22 +70,25 @@ func TestSomething(t *testing.T) {
   libraries that read only from `os.Getenv`.
 - **Pre-built services.** `services/postgres` and `services/wiremock` ship as
   testcontainers-backed implementations. New services are a single `Service`
-  interface implementation away.
+  interface implementation away (4 methods: `Name`, `Dependencies`, `Start`,
+  `Stop`).
 
 ## Pre-built services
 
 | Service | Import | Notes |
 |---|---|---|
-| PostgreSQL | `github.com/sha1n/testrig/services/postgres` | testcontainers-backed; exposes `DSN()` and `DB(ctx)` once started. |
-| WireMock | `github.com/sha1n/testrig/services/wiremock` | testcontainers-backed; exposes `URL()` and `Client()`. |
+| PostgreSQL | `github.com/sha1n/testrig/services/postgres` | testcontainers-backed; exposes `DSN()` and `DB(ctx)` once started; all property keys customizable. |
+| WireMock | `github.com/sha1n/testrig/services/wiremock` | testcontainers-backed; exposes `URL()` and `Client()`; URL property key customizable. |
 
 ## Examples
 
 - [`examples/viper-app`](examples/viper-app/) — config injection via Viper.
 - [`examples/koanf-app`](examples/koanf-app/) — config injection via koanf.
 
-Both demonstrate the bridging pattern between service-published keys (e.g.
-`pg.dsn`) and an application's own config keys (e.g. `DATABASE_URL`).
+Both demonstrate the canonical pattern: a generic application that uses the
+config library normally, plus a test that uses `testrig` with
+`WithDSNPropertyName(...)` to publish the service's outputs directly under the
+application's expected config keys.
 
 ## Spec
 

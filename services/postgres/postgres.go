@@ -4,13 +4,10 @@ package postgres
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/url"
-	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -36,6 +33,12 @@ const (
 // to env.With(...). A Postgres instance is reusable across Start/Stop cycles:
 // Stop releases the container so a subsequent Start builds a fresh one.
 // Calling Start without Stop in between returns an error.
+//
+// Property keys default to "<name>.host", "<name>.port", "<name>.user",
+// "<name>.password", "<name>.dbname", "<name>.dsn". Each is independently
+// overridable via WithXxxPropertyName so tests can wire the service's outputs
+// into the application's own config keys (e.g. "DATABASE_URL") with no
+// bridging step.
 type Postgres struct {
 	name       string
 	image      string
@@ -45,6 +48,13 @@ type Postgres struct {
 	dbPassword string
 	logger     *slog.Logger
 
+	hostPropName     string
+	portPropName     string
+	userPropName     string
+	passwordPropName string
+	dbNamePropName   string
+	dsnPropName      string
+
 	// Runtime state, populated during Start and cleared by Stop.
 	// container != nil is the canonical "currently running" check.
 	container *postgres.PostgresContainer
@@ -52,16 +62,24 @@ type Postgres struct {
 	port      string
 }
 
-// New creates a Postgres service with default configuration.
+// New creates a Postgres service with default configuration. Property keys
+// default to "<name>.<field>"; override individual keys via the
+// WithXxxPropertyName setters.
 func New(name string) *Postgres {
 	return &Postgres{
-		name:       name,
-		image:      defaultImage,
-		tag:        defaultTag,
-		dbName:     defaultDBName,
-		dbUser:     defaultDBUser,
-		dbPassword: defaultDBPassword,
-		logger:     slog.Default(),
+		name:             name,
+		image:            defaultImage,
+		tag:              defaultTag,
+		dbName:           defaultDBName,
+		dbUser:           defaultDBUser,
+		dbPassword:       defaultDBPassword,
+		logger:           slog.Default(),
+		hostPropName:     name + ".host",
+		portPropName:     name + ".port",
+		userPropName:     name + ".user",
+		passwordPropName: name + ".password",
+		dbNamePropName:   name + ".dbname",
+		dsnPropName:      name + ".dsn",
 	}
 }
 
@@ -80,22 +98,54 @@ func (t *Postgres) WithUsername(user string) *Postgres { t.dbUser = user; return
 // WithPassword sets the database password.
 func (t *Postgres) WithPassword(pass string) *Postgres { t.dbPassword = pass; return t }
 
+// WithHostPropertyName sets the property key under which the container host
+// is published. Default: "<name>.host".
+func (t *Postgres) WithHostPropertyName(name string) *Postgres {
+	t.hostPropName = name
+	return t
+}
+
+// WithPortPropertyName sets the property key under which the container port
+// is published. Default: "<name>.port".
+func (t *Postgres) WithPortPropertyName(name string) *Postgres {
+	t.portPropName = name
+	return t
+}
+
+// WithUsernamePropertyName sets the property key under which the database
+// username is published. Default: "<name>.user".
+func (t *Postgres) WithUsernamePropertyName(name string) *Postgres {
+	t.userPropName = name
+	return t
+}
+
+// WithPasswordPropertyName sets the property key under which the database
+// password is published. Default: "<name>.password".
+func (t *Postgres) WithPasswordPropertyName(name string) *Postgres {
+	t.passwordPropName = name
+	return t
+}
+
+// WithDatabasePropertyName sets the property key under which the database
+// name is published. Default: "<name>.dbname".
+func (t *Postgres) WithDatabasePropertyName(name string) *Postgres {
+	t.dbNamePropName = name
+	return t
+}
+
+// WithDSNPropertyName sets the property key under which the fully-constructed
+// DSN string is published. Default: "<name>.dsn".
+//
+// Use this to publish the DSN directly under the application's expected
+// config key (e.g. "DATABASE_URL") so the test does not need to bridge
+// between service-published and application-expected vocabularies.
+func (t *Postgres) WithDSNPropertyName(name string) *Postgres {
+	t.dsnPropName = name
+	return t
+}
+
 // Name implements testrig.Service.
 func (t *Postgres) Name() string { return t.name }
-
-// Identifier returns a content-addressed identifier over the service config.
-// SHA-256 of a NUL-separated encoding so no character in any field can break it.
-//
-// Name is intentionally NOT part of the hash: two Postgres instances configured
-// identically (same image/tag/db/credentials) but constructed with different
-// Names are equivalent for cross-env reuse — they would otherwise needlessly
-// duplicate identical containers. Use distinct configuration (different
-// database name, image tag, etc.) to force isolation, not the display Name.
-func (t *Postgres) Identifier() string {
-	parts := []string{"postgres", t.image, t.tag, t.dbName, t.dbUser, t.dbPassword}
-	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return "postgres:" + hex.EncodeToString(sum[:])
-}
 
 // Dependencies implements testrig.Service. Postgres is a leaf service.
 func (t *Postgres) Dependencies() []string { return nil }
@@ -141,12 +191,12 @@ func (t *Postgres) Start(ctx context.Context, envCtx testrig.EnvContext) (testri
 	t.port = port.Port()
 
 	return testrig.Properties{
-		t.name + ".host":     t.host,
-		t.name + ".port":     t.port,
-		t.name + ".user":     t.dbUser,
-		t.name + ".password": t.dbPassword,
-		t.name + ".dbname":   t.dbName,
-		t.name + ".dsn":      t.dsn(),
+		t.hostPropName:     t.host,
+		t.portPropName:     t.port,
+		t.userPropName:     t.dbUser,
+		t.passwordPropName: t.dbPassword,
+		t.dbNamePropName:   t.dbName,
+		t.dsnPropName:      t.dsn(),
 	}, nil
 }
 

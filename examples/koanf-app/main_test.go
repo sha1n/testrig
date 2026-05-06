@@ -2,58 +2,39 @@ package main
 
 import (
 	"context"
-	"net"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/sha1n/testrig"
-	"github.com/sha1n/testrig/services/postgres"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// LoadConfig pure-function tests — exercised without spinning up a container so
-// the validation branches are covered cheaply.
+// TestSetupEnv exercises the same integration that main() runs: spin up a
+// testrig.Env containing a Postgres service, feed env.Properties() into koanf,
+// and confirm the resulting Config points at the live container.
+//
+// This is the canonical "test the integration" surface for the example.
+func TestSetupEnv(t *testing.T) {
+	cfg, cleanup, err := setupEnv(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
 
-func TestLoadConfig_MissingAppPort(t *testing.T) {
-	_, err := LoadConfig(map[string]string{
-		"DATABASE_URL": "postgres://x",
-	})
-	if err == nil {
-		t.Fatal("expected error for missing APP_PORT")
-	}
-	if !strings.Contains(err.Error(), "APP_PORT") {
-		t.Errorf("error should mention APP_PORT; got %q", err.Error())
-	}
+	assert.Equal(t, 9090, cfg.AppPort)
+	assert.Contains(t, cfg.DatabaseURL, "koanf_db")
+	assert.Contains(t, cfg.DatabaseURL, "postgres://")
 }
 
-func TestLoadConfig_MissingDatabaseURL(t *testing.T) {
-	_, err := LoadConfig(map[string]string{
-		"APP_PORT": "8080",
-	})
-	if err == nil {
-		t.Fatal("expected error for missing DATABASE_URL")
-	}
-	if !strings.Contains(err.Error(), "DATABASE_URL") {
-		t.Errorf("error should mention DATABASE_URL; got %q", err.Error())
-	}
-}
+// TestSetupEnv_HandlerEndToEnd goes one step further: takes the Config that
+// setupEnv produces, instantiates the actual handler the app would serve, and
+// hits /health to confirm the live DSN flows all the way through.
+func TestSetupEnv_HandlerEndToEnd(t *testing.T) {
+	cfg, cleanup, err := setupEnv(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
 
-func TestLoadConfig_UnmarshalError(t *testing.T) {
-	// APP_PORT must be int; a non-numeric string forces koanf.Unmarshal to fail.
-	_, err := LoadConfig(map[string]string{
-		"APP_PORT":     "not-a-number",
-		"DATABASE_URL": "postgres://x",
-	})
-	if err == nil {
-		t.Fatal("expected unmarshal error for non-numeric APP_PORT")
-	}
-}
-
-func TestHealthHandler(t *testing.T) {
-	cfg := &Config{AppPort: 8080, DatabaseURL: "postgres://example"}
 	srv := httptest.NewServer(newHandler(cfg))
 	defer srv.Close()
 
@@ -62,125 +43,33 @@ func TestHealthHandler(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(body), "koanf_db")
+	assert.Contains(t, string(body), "postgres://")
 }
 
-// fakeListener is a minimal net.Listener used to drive run() through serve
-// without binding a real port.
-type fakeListener struct{ closed chan struct{} }
+// --- loadConfig validation paths (no container) ---
 
-func newFakeListener() *fakeListener              { return &fakeListener{closed: make(chan struct{})} }
-func (f *fakeListener) Accept() (net.Conn, error) { <-f.closed; return nil, net.ErrClosed }
-func (f *fakeListener) Close() error              { close(f.closed); return nil }
-func (f *fakeListener) Addr() net.Addr            { return &net.TCPAddr{} }
-
-// withRunHooks installs stubs for run's network/exit indirections, returning
-// a teardown func that restores originals.
-func withRunHooks(t *testing.T, l func(string, string) (net.Listener, error), s func(net.Listener, http.Handler) error) func() {
-	t.Helper()
-	origL, origS := listen, listenAndServe
-	listen = l
-	listenAndServe = s
-	return func() { listen = origL; listenAndServe = origS }
-}
-
-func TestRun_HappyPath(t *testing.T) {
-	t.Setenv("APP_PORT", "8080")
-	t.Setenv("DATABASE_URL", "postgres://x")
-
-	defer withRunHooks(t,
-		func(string, string) (net.Listener, error) { return newFakeListener(), nil },
-		func(net.Listener, http.Handler) error { return http.ErrServerClosed },
-	)()
-
-	if got := run(); got != 0 {
-		t.Errorf("run() = %d, want 0", got)
+func TestLoadConfig_MissingAppPort(t *testing.T) {
+	_, err := loadConfig(map[string]string{"DATABASE_URL": "postgres://x"})
+	if err == nil || !strings.Contains(err.Error(), "APP_PORT") {
+		t.Errorf("expected APP_PORT error, got %v", err)
 	}
 }
 
-func TestRun_ConfigError(t *testing.T) {
-	t.Setenv("APP_PORT", "")
-	t.Setenv("DATABASE_URL", "")
-
-	if got := run(); got != 1 {
-		t.Errorf("run() = %d, want 1 (config error)", got)
+func TestLoadConfig_MissingDatabaseURL(t *testing.T) {
+	_, err := loadConfig(map[string]string{"APP_PORT": "9090"})
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Errorf("expected DATABASE_URL error, got %v", err)
 	}
 }
 
-func TestRun_ListenError(t *testing.T) {
-	t.Setenv("APP_PORT", "8080")
-	t.Setenv("DATABASE_URL", "postgres://x")
-
-	defer withRunHooks(t,
-		func(string, string) (net.Listener, error) { return nil, net.ErrClosed },
-		nil,
-	)()
-
-	if got := run(); got != 1 {
-		t.Errorf("run() = %d, want 1 (listen error)", got)
+func TestLoadConfig_UnmarshalError(t *testing.T) {
+	_, err := loadConfig(map[string]string{
+		"APP_PORT":     "not-a-number",
+		"DATABASE_URL": "postgres://x",
+	})
+	if err == nil {
+		t.Fatal("expected unmarshal error for non-numeric APP_PORT")
 	}
-}
-
-func TestRun_ServeError(t *testing.T) {
-	t.Setenv("APP_PORT", "8080")
-	t.Setenv("DATABASE_URL", "postgres://x")
-
-	defer withRunHooks(t,
-		func(string, string) (net.Listener, error) { return newFakeListener(), nil },
-		func(net.Listener, http.Handler) error { return errExpectedServeFailure },
-	)()
-
-	if got := run(); got != 1 {
-		t.Errorf("run() = %d, want 1 (serve error)", got)
-	}
-}
-
-var errExpectedServeFailure = errExpected{}
-
-type errExpected struct{}
-
-func (errExpected) Error() string { return "expected serve failure" }
-
-func TestMain_DispatchesToRun(t *testing.T) {
-	t.Setenv("APP_PORT", "")
-	t.Setenv("DATABASE_URL", "")
-
-	var got int
-	origExit := exit
-	exit = func(code int) { got = code }
-	defer func() { exit = origExit }()
-
-	main()
-
-	if got != 1 {
-		t.Errorf("main() exited with %d, want 1 (config error path)", got)
-	}
-}
-
-func TestKoanfConfigLoading(t *testing.T) {
-	pg := postgres.New("pg").WithDatabase("koanf_db")
-
-	env := testrig.MustNew(testrig.With(pg))
-	require.NoError(t, env.Start(context.Background()))
-	t.Cleanup(func() { require.NoError(t, env.Stop(context.Background())) })
-
-	// Parallel-safe: properties are injected via koanf's confmap.Provider
-	// (in-memory), not via os.Setenv. Each test gets its own koanf instance.
-	//
-	// The Postgres service exports its DSN under the fixed key "pg.dsn"; the
-	// application's config expects "DATABASE_URL". Bridge from the service's
-	// vocabulary to the application's vocabulary at the consumption site.
-	// Note that koanf treats "." as a delimiter — passing "pg.dsn" verbatim
-	// would create a nested map, not a flat key.
-	props := env.Properties()
-	overrides := map[string]string{
-		"DATABASE_URL": props["pg.dsn"],
-		"APP_PORT":     "9090",
-	}
-
-	cfg, err := LoadConfig(overrides)
-	require.NoError(t, err)
-
-	assert.Equal(t, 9090, cfg.AppPort)
-	assert.Contains(t, cfg.DatabaseURL, "koanf_db")
-	assert.Contains(t, cfg.DatabaseURL, "postgres://")
 }

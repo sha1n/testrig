@@ -37,16 +37,6 @@ func TestNew_WithName_Empty_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestNew_WithDiscovery_Nil_ReturnsError(t *testing.T) {
-	_, err := testrig.New(testrig.WithDiscovery(nil))
-	if err == nil {
-		t.Fatal("expected error from WithDiscovery(nil)")
-	}
-	if !strings.Contains(err.Error(), "non-nil DiscoveryProvider") {
-		t.Errorf("error should mention non-nil DiscoveryProvider; got %q", err.Error())
-	}
-}
-
 func TestNew_WithLogger_Nil_ReturnsError(t *testing.T) {
 	_, err := testrig.New(testrig.WithLogger(nil))
 	if err == nil {
@@ -78,7 +68,6 @@ func TestNew_With_NilService_ReturnsError(t *testing.T) {
 }
 
 func TestNew_OptionsAccumulate(t *testing.T) {
-	logger1Called := false
 	hook := &MockLifecycleHook{}
 	svc := &MockService{name: "svc1"}
 
@@ -93,5 +82,4 @@ func TestNew_OptionsAccumulate(t *testing.T) {
 	if env.Name() != "custom" {
 		t.Errorf("name = %q, want %q", env.Name(), "custom")
 	}
-	_ = logger1Called // (placeholder to avoid declared-but-not-used in this minimal sketch)
 }

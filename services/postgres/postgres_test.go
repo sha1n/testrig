@@ -15,9 +15,6 @@ func TestPostgres_Defaults(t *testing.T) {
 	if tk.Name() != "test-db" {
 		t.Errorf("Unexpected name: %s", tk.Name())
 	}
-	if !strings.HasPrefix(tk.Identifier(), "postgres:") {
-		t.Errorf("Unexpected identifier prefix: %s", tk.Identifier())
-	}
 	if len(tk.Dependencies()) != 0 {
 		t.Error("Expected no dependencies")
 	}
@@ -101,25 +98,46 @@ func TestPostgres_DSNProperty_URLEncodesSpecialChars(t *testing.T) {
 	}
 }
 
-func TestPostgres_Identifier_StableAndCollisionResistant(t *testing.T) {
-	a := postgres.New("svc").WithPassword("foo:bar")
-	b := postgres.New("svc").WithPassword("foo:bar")
-	c := postgres.New("svc").WithPassword("foo:baz")
+func TestPostgres_PropertyNameOverrides(t *testing.T) {
+	tk := postgres.New("pg").
+		WithDatabase("app_db").
+		WithDSNPropertyName("DATABASE_URL").
+		WithHostPropertyName("DB_HOST").
+		WithPortPropertyName("DB_PORT").
+		WithUsernamePropertyName("DB_USER").
+		WithPasswordPropertyName("DB_PASSWORD").
+		WithDatabasePropertyName("DB_NAME")
 
-	if a.Identifier() != b.Identifier() {
-		t.Error("Same config should yield same identifier")
+	props, err := tk.Start(context.Background(), &testutil.MockEnvContext{})
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
 	}
-	if a.Identifier() == c.Identifier() {
-		t.Error("Different password should yield different identifier")
+	defer func() { _ = tk.Stop(context.Background()) }()
+
+	if props["DATABASE_URL"] == "" {
+		t.Error("DATABASE_URL property not published under custom key")
 	}
-}
+	if props["DB_HOST"] == "" {
+		t.Error("DB_HOST property not published under custom key")
+	}
+	if props["DB_PORT"] == "" {
+		t.Error("DB_PORT property not published under custom key")
+	}
+	if props["DB_USER"] != "user" {
+		t.Errorf("DB_USER = %q, want \"user\"", props["DB_USER"])
+	}
+	if props["DB_PASSWORD"] != "password" {
+		t.Errorf("DB_PASSWORD = %q, want \"password\"", props["DB_PASSWORD"])
+	}
+	if props["DB_NAME"] != "app_db" {
+		t.Errorf("DB_NAME = %q, want \"app_db\"", props["DB_NAME"])
+	}
 
-func TestPostgres_Identifier_IndependentOfName(t *testing.T) {
-	a := postgres.New("primary").WithDatabase("app")
-	b := postgres.New("replica").WithDatabase("app")
-
-	if a.Identifier() != b.Identifier() {
-		t.Error("Identifier should be independent of Name; same config must yield same identifier regardless of display name")
+	// Default keys should NOT be present when overridden.
+	for _, k := range []string{"pg.host", "pg.port", "pg.user", "pg.password", "pg.dbname", "pg.dsn"} {
+		if _, ok := props[k]; ok {
+			t.Errorf("default key %q should not be published when overridden", k)
+		}
 	}
 }
 

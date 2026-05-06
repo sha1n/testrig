@@ -7,27 +7,6 @@ import (
 	"testing"
 )
 
-// --- mapStore zero-value ---
-
-func TestMapStore_ZeroValue_Safe(t *testing.T) {
-	s := &mapStore{}
-	if err := s.Store("k", "v"); err != nil {
-		t.Fatalf("Store on zero-value mapStore failed: %v", err)
-	}
-	val, ok := s.Load("k")
-	if !ok || val != "v" {
-		t.Errorf("Expected k=v, got ok=%v val=%q", ok, val)
-	}
-}
-
-func TestMapStore_ZeroValue_LoadOnly(t *testing.T) {
-	s := &mapStore{}
-	_, ok := s.Load("missing")
-	if ok {
-		t.Error("Expected ok=false on zero-value mapStore")
-	}
-}
-
 // --- envState String ---
 
 func TestEnvState_String(t *testing.T) {

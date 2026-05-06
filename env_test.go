@@ -2,11 +2,8 @@ package testrig_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"strings"
 	"sync"
@@ -31,7 +28,6 @@ type MockService struct {
 }
 
 func (m *MockService) Name() string           { return m.name }
-func (m *MockService) Identifier() string     { return "mock:" + m.name }
 func (m *MockService) Dependencies() []string { return m.deps }
 
 func (m *MockService) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
@@ -59,20 +55,20 @@ func (m *MockService) Stop(ctx context.Context) error {
 }
 
 type MockLifecycleHook struct {
-	onStart func(ctx context.Context, envCtx testrig.EnvContext) error
-	onStop  func(ctx context.Context, envCtx testrig.EnvContext) error
+	afterStart func(ctx context.Context, envCtx testrig.EnvContext) error
+	afterStop  func(ctx context.Context, envCtx testrig.EnvContext) error
 }
 
-func (m *MockLifecycleHook) OnStart(ctx context.Context, envCtx testrig.EnvContext) error {
-	if m.onStart != nil {
-		return m.onStart(ctx, envCtx)
+func (m *MockLifecycleHook) AfterStart(ctx context.Context, envCtx testrig.EnvContext) error {
+	if m.afterStart != nil {
+		return m.afterStart(ctx, envCtx)
 	}
 	return nil
 }
 
-func (m *MockLifecycleHook) OnStop(ctx context.Context, envCtx testrig.EnvContext) error {
-	if m.onStop != nil {
-		return m.onStop(ctx, envCtx)
+func (m *MockLifecycleHook) AfterStop(ctx context.Context, envCtx testrig.EnvContext) error {
+	if m.afterStop != nil {
+		return m.afterStop(ctx, envCtx)
 	}
 	return nil
 }
@@ -97,7 +93,7 @@ func TestEnv_Start_Success(t *testing.T) {
 }
 
 func TestEnv_Start_MissingDependency(t *testing.T) {
-	s1 := &MockService{name: "svc-missing-dep", deps: []string{"missing-svc"}}
+	s1 := &MockService{name: "svc1", deps: []string{"missing-svc"}}
 
 	env := testrig.MustNew(testrig.With(s1))
 
@@ -105,11 +101,8 @@ func TestEnv_Start_MissingDependency(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error due to missing dependency, got nil")
 	}
-	expected := "depends on unknown service missing-svc"
-	if err.Error() != "service svc1 "+expected && err.Error() != expected { // Error group wrapping check
-		if err.Error() != expected && !strings.Contains(err.Error(), expected) {
-			t.Errorf("Expected error containing %q, got %q", expected, err.Error())
-		}
+	if !strings.Contains(err.Error(), "depends on unknown service missing-svc") {
+		t.Errorf("Expected 'depends on unknown service missing-svc', got %v", err)
 	}
 }
 
@@ -123,14 +116,13 @@ func TestEnv_Start_CircularDependency(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error due to circular dependency, got nil")
 	}
-	expected := "circular dependency detected"
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected error containing %q, got %q", expected, err.Error())
+	if !strings.Contains(err.Error(), "circular dependency detected") {
+		t.Errorf("Expected circular-dependency error, got %v", err)
 	}
 }
 
 func TestEnv_Start_ServiceError(t *testing.T) {
-	s1 := &MockService{name: "svc-start-err", startErr: errors.New("boom")}
+	s1 := &MockService{name: "svc1", startErr: errors.New("boom")}
 
 	env := testrig.MustNew(testrig.With(s1))
 
@@ -148,15 +140,31 @@ func TestEnv_Start_ContextCancellation(t *testing.T) {
 	s1 := &MockService{name: "svc-slow", startDelay: 100 * time.Millisecond}
 
 	env := testrig.MustNew(testrig.With(s1))
-
-	// Cancel immediately
 	cancel()
+
 	err := env.Start(ctx)
 	if err == nil {
 		t.Fatal("Expected context cancellation error, got nil")
 	}
 	if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
 		t.Errorf("Expected context canceled, got %v", err)
+	}
+}
+
+func TestEnv_Start_ContextCancellation_WaitingForDependency(t *testing.T) {
+	s1 := &MockService{name: "svc1", startDelay: 1 * time.Second}
+	s2 := &MockService{name: "svc2", deps: []string{"svc1"}}
+
+	env := testrig.MustNew(testrig.With(s1, s2))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	err := env.Start(ctx)
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("Expected context deadline exceeded, got %v", err)
 	}
 }
 
@@ -182,42 +190,11 @@ func TestEnv_StateTransitions(t *testing.T) {
 		t.Errorf("Second stop should be safe/no-op, got error: %v", err)
 	}
 
-	// 4. Restart on the same Env instance must succeed end-to-end. Stop
-	// unpublishes everything, so this Start runs a fresh service lifecycle
-	// (no reuse) — runState was released and is allocated again from scratch.
+	// 4. Restart on the same Env instance must succeed end-to-end.
 	if err := env.Start(context.Background()); err != nil {
 		t.Errorf("Restart failed: %v", err)
 	}
 	_ = env.Stop(context.Background())
-}
-
-func TestEnv_Start_ReuseWithProperties(t *testing.T) {
-	s1 := &MockService{name: "svc1", properties: testrig.Properties{"p1": "v1"}}
-
-	// Both envs share the same MapStore so env2 can discover what env1 published.
-	sharedStore := testrig.NewMapStore()
-	sharedDiscovery := testrig.NewDiscovery(sharedStore)
-
-	env := testrig.MustNew(testrig.With(s1), testrig.WithDiscovery(sharedDiscovery))
-
-	// 1. Start env1 — publishes properties to sharedStore
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("First start failed: %v", err)
-	}
-	// Keep env1 running so the service stays published.
-
-	// 2. Start env2 with same service — should discover and reuse
-	env2 := testrig.MustNew(testrig.With(s1), testrig.WithDiscovery(sharedDiscovery))
-	if err := env2.Start(context.Background()); err != nil {
-		t.Fatalf("Second start failed: %v", err)
-	}
-	defer func() { _ = env2.Stop(context.Background()) }()
-	defer func() { _ = env.Stop(context.Background()) }()
-
-	props := env2.Properties()
-	if props["p1"] != "v1" {
-		t.Errorf("Expected p1=v1 from reused service, got %v", props)
-	}
 }
 
 func TestEnv_Stop_ServiceError(t *testing.T) {
@@ -243,35 +220,6 @@ func TestEnv_WithLogger(t *testing.T) {
 	}
 }
 
-func TestEnvDiscovery_Discover_InvalidJSON(t *testing.T) {
-	d := testrig.NewOsEnvDiscovery()
-	s := &MockService{name: "invalid-json"}
-	key := "TESTRIG_SERVICE_" + s.Identifier()
-	_ = os.Setenv(key, "invalid-json")
-	defer func() { _ = os.Unsetenv(key) }()
-
-	_, found, err := d.Discover(context.Background(), s)
-	if err == nil {
-		t.Fatal("Expected error from invalid-JSON discovery payload")
-	}
-	if found {
-		t.Error("Expected found=false on decode error")
-	}
-}
-
-func TestEnv_Start_UnknownDependency(t *testing.T) {
-	s1 := &MockService{name: "svc1", deps: []string{"unknown"}}
-	env := testrig.MustNew(testrig.With(s1))
-
-	err := env.Start(context.Background())
-	if err == nil {
-		t.Fatal("Expected error due to unknown dependency, got nil")
-	}
-	if !strings.Contains(err.Error(), "depends on unknown service unknown") {
-		t.Errorf("Expected error containing 'depends on unknown service unknown', got %v", err)
-	}
-}
-
 func TestEnv_Start_UnknownDependency_RejectsBeforeAnyServiceStarts(t *testing.T) {
 	var validStarted bool
 	valid := &MockService{name: "valid", onStart: func() { validStarted = true }}
@@ -286,23 +234,6 @@ func TestEnv_Start_UnknownDependency_RejectsBeforeAnyServiceStarts(t *testing.T)
 	}
 }
 
-func TestEnv_Start_ContextCancellation_WaitingForDependency(t *testing.T) {
-	s1 := &MockService{name: "svc1", startDelay: 1 * time.Second}
-	s2 := &MockService{name: "svc2", deps: []string{"svc1"}}
-
-	env := testrig.MustNew(testrig.With(s1, s2))
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	err := env.Start(ctx)
-	if err == nil {
-		t.Fatal("Expected error, got nil")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
-		t.Errorf("Expected context deadline exceeded, got %v", err)
-	}
-}
-
 type ContextConsumerService struct {
 	MockService
 	t *testing.T
@@ -313,7 +244,6 @@ func (s *ContextConsumerService) Start(ctx context.Context, envCtx testrig.EnvCo
 	if !ok || val != "bar" {
 		s.t.Errorf("Expected foo=bar, got %s (ok=%v)", val, ok)
 	}
-
 	props := envCtx.Properties()
 	if props["foo"] != "bar" {
 		s.t.Errorf("Properties() map missing foo=bar: %v", props)
@@ -334,18 +264,18 @@ func TestEnv_ContextAccess(t *testing.T) {
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-
 	if env.Name() != "testenv" {
 		t.Errorf("Unexpected env name: %s", env.Name())
 	}
-
 	_ = env.Stop(context.Background())
 }
 
 func TestEnv_Start_Rollback(t *testing.T) {
-	var stopped1 bool
+	// Two services: s1 starts successfully, s2 fails. Rollback must stop s1
+	// (it acquired resources) but must NOT call Stop on s2 (it never started).
+	var stopped1, stopped2 bool
 	s1 := &MockService{name: "svc1", onStop: func() { stopped1 = true }}
-	s2 := &MockService{name: "svc2", startErr: errors.New("boom")}
+	s2 := &MockService{name: "svc2", startErr: errors.New("boom"), onStop: func() { stopped2 = true }}
 
 	env := testrig.MustNew(testrig.With(s1, s2))
 
@@ -353,18 +283,53 @@ func TestEnv_Start_Rollback(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
-
 	if !stopped1 {
 		t.Error("svc1 should have been stopped (rollback)")
+	}
+	if stopped2 {
+		t.Error("svc2 should NOT have been stopped — its Start failed, so it never acquired resources")
+	}
+}
+
+func TestEnv_Start_DependencyFailure_DependentSkipped(t *testing.T) {
+	// A fails to start; B depends on A. B's Start must never be called (dep
+	// not ready) and B's Stop must never be called (never started).
+	var aStarted, bStarted, aStopped, bStopped bool
+	a := &MockService{
+		name:     "A",
+		startErr: errors.New("a-fail"),
+		onStart:  func() { aStarted = true },
+		onStop:   func() { aStopped = true },
+	}
+	b := &MockService{
+		name:    "B",
+		deps:    []string{"A"},
+		onStart: func() { bStarted = true },
+		onStop:  func() { bStopped = true },
+	}
+
+	env := testrig.MustNew(testrig.With(a, b))
+	if err := env.Start(context.Background()); err == nil {
+		t.Fatal("expected error from A's failure")
+	}
+
+	if !aStarted {
+		t.Error("A's Start should have been invoked")
+	}
+	if bStarted {
+		t.Error("B's Start should NOT have been invoked (dependency A failed)")
+	}
+	if aStopped {
+		t.Error("A's Stop should NOT have been called (its Start failed)")
+	}
+	if bStopped {
+		t.Error("B's Stop should NOT have been called (it never started)")
 	}
 }
 
 func TestEnv_Start_Rollback_JoinsRollbackErrors(t *testing.T) {
 	startErr := errors.New("boom")
 	stopErr := errors.New("rollback-fail")
-	// s1 starts successfully but its Stop fails; s2's Start fails, triggering
-	// the rollback. The user must see BOTH the original Start failure and
-	// the rollback Stop failure.
 	s1 := &MockService{name: "s1", stopErr: stopErr}
 	s2 := &MockService{name: "s2", startErr: startErr}
 
@@ -385,21 +350,12 @@ func TestEnv_ParallelStartStop(t *testing.T) {
 	// A -> B
 	// C -> B
 	// All should start/stop in parallel where possible.
-
 	var mu sync.Mutex
 	startTimes := make(map[string]time.Time)
 	stopTimes := make(map[string]time.Time)
 
-	recordStart := func(name string) {
-		mu.Lock()
-		defer mu.Unlock()
-		startTimes[name] = time.Now()
-	}
-	recordStop := func(name string) {
-		mu.Lock()
-		defer mu.Unlock()
-		stopTimes[name] = time.Now()
-	}
+	recordStart := func(name string) { mu.Lock(); startTimes[name] = time.Now(); mu.Unlock() }
+	recordStop := func(name string) { mu.Lock(); stopTimes[name] = time.Now(); mu.Unlock() }
 
 	sB := &MockService{name: "B", startDelay: 50 * time.Millisecond, onStart: func() { recordStart("B") }, onStop: func() { recordStop("B") }}
 	sA := &MockService{name: "A", deps: []string{"B"}, startDelay: 50 * time.Millisecond, onStart: func() { recordStart("A") }, onStop: func() { recordStop("A") }}
@@ -411,11 +367,9 @@ func TestEnv_ParallelStartStop(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	// Verify Start Order & Parallelism
 	if startTimes["A"].Before(startTimes["B"]) || startTimes["C"].Before(startTimes["B"]) {
 		t.Error("B must start before A and C")
 	}
-	// A and C should have started roughly at the same time (parallel)
 	diff := startTimes["A"].Sub(startTimes["C"])
 	if diff < 0 {
 		diff = -diff
@@ -428,11 +382,9 @@ func TestEnv_ParallelStartStop(t *testing.T) {
 		t.Fatalf("Stop failed: %v", err)
 	}
 
-	// Verify Stop Order & Parallelism
 	if stopTimes["B"].Before(stopTimes["A"]) || stopTimes["B"].Before(stopTimes["C"]) {
 		t.Error("A and C must stop before B")
 	}
-	// A and C should have stopped roughly at the same time (parallel)
 	diff = stopTimes["A"].Sub(stopTimes["C"])
 	if diff < 0 {
 		diff = -diff
@@ -447,7 +399,7 @@ func TestEnv_WithLifecycleHook_Success(t *testing.T) {
 
 	var startCalled, stopCalled bool
 	pm := &MockLifecycleHook{
-		onStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			startCalled = true
 			val, _ := envCtx.Get("foo")
 			if val != "bar" {
@@ -455,11 +407,11 @@ func TestEnv_WithLifecycleHook_Success(t *testing.T) {
 			}
 			return nil
 		},
-		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			stopCalled = true
 			val, _ := envCtx.Get("foo")
 			if val != "bar" {
-				t.Errorf("Expected foo=bar in OnStop, got %s", val)
+				t.Errorf("Expected foo=bar in AfterStop, got %s", val)
 			}
 			return nil
 		},
@@ -470,29 +422,26 @@ func TestEnv_WithLifecycleHook_Success(t *testing.T) {
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-
 	if !startCalled {
-		t.Error("OnStart was not called")
+		t.Error("AfterStart was not called")
 	}
-
 	if err := env.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}
-
 	if !stopCalled {
-		t.Error("OnStop was not called")
+		t.Error("AfterStop was not called")
 	}
 }
 
-func TestEnv_WithLifecycleHook_OnStartError(t *testing.T) {
+func TestEnv_WithLifecycleHook_AfterStartError(t *testing.T) {
 	s1 := &MockService{name: "svc1"}
 
 	var stopCalled bool
 	pm := &MockLifecycleHook{
-		onStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			return errors.New("start-fail")
 		},
-		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			stopCalled = true
 			return nil
 		},
@@ -502,23 +451,21 @@ func TestEnv_WithLifecycleHook_OnStartError(t *testing.T) {
 
 	err := env.Start(context.Background())
 	if err == nil {
-		t.Fatal("Expected error from OnStart, got nil")
+		t.Fatal("Expected error from AfterStart, got nil")
 	}
 	if !strings.Contains(err.Error(), "start-fail") {
 		t.Errorf("Expected error containing 'start-fail', got %v", err)
 	}
-
-	// If OnStart fails, Start should call Stop, which calls OnStop
 	if !stopCalled {
-		t.Error("OnStop should have been called during rollback")
+		t.Error("AfterStop should have been called during rollback")
 	}
 }
 
-func TestEnv_WithLifecycleHook_OnStopError(t *testing.T) {
+func TestEnv_WithLifecycleHook_AfterStopError(t *testing.T) {
 	s1 := &MockService{name: "svc1"}
 
 	pm := &MockLifecycleHook{
-		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			return errors.New("stop-fail")
 		},
 	}
@@ -528,7 +475,7 @@ func TestEnv_WithLifecycleHook_OnStopError(t *testing.T) {
 	_ = env.Start(context.Background())
 	err := env.Stop(context.Background())
 	if err == nil {
-		t.Fatal("Expected error from OnStop, got nil")
+		t.Fatal("Expected error from AfterStop, got nil")
 	}
 	if !strings.Contains(err.Error(), "stop-fail") {
 		t.Errorf("Expected error containing 'stop-fail', got %v", err)
@@ -537,8 +484,6 @@ func TestEnv_WithLifecycleHook_OnStopError(t *testing.T) {
 
 func TestEnvContext_Logger(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	// We need a way to capture the envCtx.
-	// Let's use a specialized mock service.
 	svc := &loggerCapturingService{
 		MockService: MockService{name: "svc1"},
 	}
@@ -547,9 +492,6 @@ func TestEnvContext_Logger(t *testing.T) {
 	_ = env.Start(context.Background())
 	defer func() { _ = env.Stop(context.Background()) }()
 
-	// Task 3.1: the captured logger is a scoped child of the env logger,
-	// so it is NOT pointer-equal to the parent. It must be non-nil and
-	// different from the bare slog default.
 	capturedLogger := svc.capturedEnvCtx.Logger()
 	if capturedLogger == nil {
 		t.Error("Expected a non-nil logger, got nil")
@@ -576,21 +518,71 @@ func TestEnv_Stop_NotRunning(t *testing.T) {
 	}
 }
 
+func TestEnv_Properties_EmptyOnIdleEnv(t *testing.T) {
+	// Properties() on a never-started env returns a non-nil but empty map.
+	env := testrig.MustNew()
+	if got := env.Properties(); got == nil {
+		t.Error("expected non-nil empty map, got nil")
+	} else if len(got) != 0 {
+		t.Errorf("expected empty map, got %v", got)
+	}
+}
+
+func TestEnv_Properties_EmptyAfterStop(t *testing.T) {
+	// Once the env stops, Properties() must return empty — the runState is
+	// released so stale properties cannot leak to callers after Stop.
+	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "v"}}
+	env := testrig.MustNew(testrig.With(svc))
+
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	if env.Properties()["k"] != "v" {
+		t.Fatal("property k should be present while running")
+	}
+	if err := env.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+
+	if got := env.Properties(); len(got) != 0 {
+		t.Errorf("expected empty properties after Stop, got %v", got)
+	}
+}
+
+func TestEnv_Restart_PropertiesReflectFreshRun(t *testing.T) {
+	// Same Env instance, two Start/Stop cycles. The second run must not see
+	// stale properties from the first — the runState is reset on each Start.
+	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "first"}}
+	env := testrig.MustNew(testrig.With(svc))
+
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("first Start failed: %v", err)
+	}
+	if got := env.Properties()["k"]; got != "first" {
+		t.Errorf("first run: got %q, want \"first\"", got)
+	}
+	if err := env.Stop(context.Background()); err != nil {
+		t.Fatalf("first Stop failed: %v", err)
+	}
+
+	// Mutate the service so the second run publishes a different value.
+	svc.properties = testrig.Properties{"k": "second"}
+
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("second Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+	if got := env.Properties()["k"]; got != "second" {
+		t.Errorf("second run: got %q, want \"second\"", got)
+	}
+}
+
 func TestEnv_Stop_WithDependents(t *testing.T) {
-	// A -> B
-	// Stop should wait for A before stopping B
+	// A -> B; Stop should wait for A before stopping B.
 	var stopOrder []string
 	var mu sync.Mutex
-	sB := &MockService{name: "B", onStop: func() {
-		mu.Lock()
-		stopOrder = append(stopOrder, "B")
-		mu.Unlock()
-	}}
-	sA := &MockService{name: "A", deps: []string{"B"}, onStop: func() {
-		mu.Lock()
-		stopOrder = append(stopOrder, "A")
-		mu.Unlock()
-	}}
+	sB := &MockService{name: "B", onStop: func() { mu.Lock(); stopOrder = append(stopOrder, "B"); mu.Unlock() }}
+	sA := &MockService{name: "A", deps: []string{"B"}, onStop: func() { mu.Lock(); stopOrder = append(stopOrder, "A"); mu.Unlock() }}
 
 	env := testrig.MustNew(testrig.With(sA, sB))
 	_ = env.Start(context.Background())
@@ -602,12 +594,11 @@ func TestEnv_Stop_WithDependents(t *testing.T) {
 }
 
 func TestEnv_Stop_ContextCancelled_WhileWaitingForDependent(t *testing.T) {
-	// A -> B. During Stop, B's goroutine waits for A's stopSignal because B
+	// A -> B. During Stop, B's goroutine waits for A's stop signal because B
 	// has A as a dependent. If the parent ctx cancels before A's slow Stop
 	// finishes, B must surface the ctx error rather than block indefinitely.
 	sB := &MockService{name: "B"}
 	sA := &MockService{name: "A", deps: []string{"B"}, onStop: func() {
-		// Hold A's stop long enough that B gets to wait, then ctx deadlines.
 		time.Sleep(500 * time.Millisecond)
 	}}
 
@@ -635,10 +626,10 @@ func TestEnv_Stop_MultipleHooksError(t *testing.T) {
 	h1Err := errors.New("err1")
 	h2Err := errors.New("err2")
 	h1 := &MockLifecycleHook{
-		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error { return h1Err },
+		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error { return h1Err },
 	}
 	h2 := &MockLifecycleHook{
-		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error { return h2Err },
+		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error { return h2Err },
 	}
 
 	env := testrig.MustNew(testrig.With(s1), testrig.WithHooks(h1, h2), testrig.WithLogger(logger))
@@ -649,42 +640,11 @@ func TestEnv_Stop_MultipleHooksError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
-	// Both hook errors must be reported via errors.Join.
 	if !errors.Is(err, h1Err) {
-		t.Errorf("Expected returned error to wrap h1Err via errors.Is, got %v", err)
+		t.Errorf("Expected returned error to wrap h1Err, got %v", err)
 	}
 	if !errors.Is(err, h2Err) {
-		t.Errorf("Expected returned error to wrap h2Err via errors.Is, got %v", err)
-	}
-}
-
-func TestEnv_Stop_DoesNotStopReusedServices(t *testing.T) {
-	var stopCount int32
-	svc := &MockService{
-		name:       "reused",
-		properties: testrig.Properties{"k": "v"},
-		onStop:     func() { atomic.AddInt32(&stopCount, 1) },
-	}
-
-	sharedDiscovery := testrig.NewDiscovery(testrig.NewMapStore())
-	owner := testrig.MustNew(testrig.With(svc), testrig.WithDiscovery(sharedDiscovery))
-	if err := owner.Start(context.Background()); err != nil {
-		t.Fatalf("owner Start failed: %v", err)
-	}
-	defer func() { _ = owner.Stop(context.Background()) }()
-
-	reuser := testrig.MustNew(testrig.With(svc), testrig.WithDiscovery(sharedDiscovery))
-	if err := reuser.Start(context.Background()); err != nil {
-		t.Fatalf("reuser Start failed: %v", err)
-	}
-	if err := reuser.Stop(context.Background()); err != nil {
-		t.Fatalf("reuser Stop failed: %v", err)
-	}
-
-	// reuser stopped — but svc was reused, not started by reuser, so its
-	// Stop must not have been called.
-	if got := atomic.LoadInt32(&stopCount); got != 0 {
-		t.Errorf("svc.Stop called %d times by reuser; expected 0 (reused services are not stopped)", got)
+		t.Errorf("Expected returned error to wrap h2Err, got %v", err)
 	}
 }
 
@@ -692,7 +652,7 @@ func TestEnv_Stop_ConcurrentCallsAreIdempotent(t *testing.T) {
 	var stopCount, hookStopCount int32
 	svc := &MockService{name: "svc1", onStop: func() { atomic.AddInt32(&stopCount, 1) }}
 	hook := &MockLifecycleHook{
-		onStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			atomic.AddInt32(&hookStopCount, 1)
 			return nil
 		},
@@ -718,7 +678,7 @@ func TestEnv_Stop_ConcurrentCallsAreIdempotent(t *testing.T) {
 		t.Errorf("svc.Stop called %d times under concurrent Stop; expected exactly 1", got)
 	}
 	if got := atomic.LoadInt32(&hookStopCount); got != 1 {
-		t.Errorf("OnStop hook called %d times under concurrent Stop; expected exactly 1", got)
+		t.Errorf("AfterStop hook called %d times under concurrent Stop; expected exactly 1", got)
 	}
 }
 
@@ -732,9 +692,6 @@ func TestEnvContext_TypeSafeHelpers(t *testing.T) {
 		},
 	}
 
-	var capturedCtx testrig.EnvContext
-	// We need a way to capture the context in s2.Start
-	// Let's use a closure or a custom service.
 	svc2 := &loggerCapturingService{
 		MockService: MockService{name: "svc2", deps: []string{"svc1"}},
 	}
@@ -743,7 +700,7 @@ func TestEnvContext_TypeSafeHelpers(t *testing.T) {
 	_ = env.Start(context.Background())
 	defer func() { _ = env.Stop(context.Background()) }()
 
-	capturedCtx = svc2.capturedEnvCtx
+	capturedCtx := svc2.capturedEnvCtx
 
 	if val, err := capturedCtx.Int("int"); err != nil || val != 42 {
 		t.Errorf("Int() failed: val=%v, err=%v", val, err)
@@ -753,129 +710,6 @@ func TestEnvContext_TypeSafeHelpers(t *testing.T) {
 	}
 	if val, err := capturedCtx.Duration("duration"); err != nil || val != time.Second {
 		t.Errorf("Duration() failed: val=%v, err=%v", val, err)
-	}
-}
-
-// --- Task 1.2: Liveness Check ---
-
-func TestEnvDiscovery_Discover_DeadHostPort(t *testing.T) {
-	d := testrig.NewOsEnvDiscovery()
-	svc := &MockService{name: "dead-svc"}
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-
-	// Publish properties with a host+port that is guaranteed to be unreachable.
-	deadProps := testrig.Properties{
-		"dead-svc.host": "127.0.0.1",
-		"dead-svc.port": "1", // Port 1 is privileged and never open in tests.
-	}
-	data, _ := json.Marshal(deadProps)
-	_ = os.Setenv(key, string(data))
-	defer func() { _ = os.Unsetenv(key) }()
-
-	props, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover returned unexpected error: %v", err)
-	}
-	if found {
-		t.Error("Expected found=false for dead service, got true")
-	}
-	if props != nil {
-		t.Errorf("Expected nil props for dead service, got %v", props)
-	}
-}
-
-func TestEnvDiscovery_Discover_AliveHostPort(t *testing.T) {
-	// Start a real listener to simulate a live service.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Failed to start listener: %v", err)
-	}
-	defer func() { _ = ln.Close() }()
-
-	addr := ln.Addr().(*net.TCPAddr)
-	d := testrig.NewOsEnvDiscovery()
-	svc := &MockService{name: "live-svc"}
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-
-	liveProps := testrig.Properties{
-		"live-svc.host": "127.0.0.1",
-		"live-svc.port": fmt.Sprintf("%d", addr.Port),
-	}
-	data, _ := json.Marshal(liveProps)
-	_ = os.Setenv(key, string(data))
-	defer func() { _ = os.Unsetenv(key) }()
-
-	props, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover returned unexpected error: %v", err)
-	}
-	if !found {
-		t.Error("Expected found=true for live service, got false")
-	}
-	if props == nil {
-		t.Error("Expected non-nil props for live service")
-	}
-}
-
-func TestEnvDiscovery_Discover_NoHostPort_IsLive(t *testing.T) {
-	// Properties without host+port should be treated as live (backwards-compatible).
-	d := testrig.NewOsEnvDiscovery()
-	svc := &MockService{name: "no-addr-svc"}
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-
-	noAddrProps := testrig.Properties{"some.key": "some.value"}
-	data, _ := json.Marshal(noAddrProps)
-	_ = os.Setenv(key, string(data))
-	defer func() { _ = os.Unsetenv(key) }()
-
-	_, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover returned unexpected error: %v", err)
-	}
-	if !found {
-		t.Error("Expected found=true when no host/port in props, got false")
-	}
-}
-
-// --- Task 1.3: Unpublish ---
-
-func TestEnvDiscovery_Unpublish(t *testing.T) {
-	d := testrig.NewOsEnvDiscovery()
-	svc := &MockService{name: "to-unpublish"}
-	props := testrig.Properties{"k": "v"}
-
-	_ = d.Publish(context.Background(), svc, props)
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	if os.Getenv(key) == "" {
-		t.Fatal("Expected env var to be set after Publish")
-	}
-
-	if err := d.Unpublish(context.Background(), svc); err != nil {
-		t.Fatalf("Unpublish returned error: %v", err)
-	}
-	if os.Getenv(key) != "" {
-		t.Error("Expected env var to be unset after Unpublish")
-	}
-}
-
-func TestEnv_Stop_Unpublishes_StartedService(t *testing.T) {
-	svc := &MockService{name: "svc-to-unpublish", properties: testrig.Properties{"k": "v"}}
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	defer func() { _ = os.Unsetenv(key) }()
-
-	env := testrig.MustNew(testrig.With(svc), testrig.WithDiscovery(testrig.NewOsEnvDiscovery()))
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	if os.Getenv(key) == "" {
-		t.Fatal("Expected env var to be published after Start")
-	}
-
-	if err := env.Stop(context.Background()); err != nil {
-		t.Fatalf("Stop failed: %v", err)
-	}
-	if os.Getenv(key) != "" {
-		t.Error("Expected env var to be unpublished after Stop")
 	}
 }
 
@@ -903,249 +737,8 @@ func TestEnv_Start_ProvidesPerServiceScopedLogger(t *testing.T) {
 	if svc.capturedLogger == nil {
 		t.Fatal("Logger was not injected into service Start")
 	}
-	// Logger should not be the bare default (it is scoped with service name).
 	if svc.capturedLogger == slog.Default() {
 		t.Error("Expected per-service scoped logger, got bare default logger")
-	}
-}
-
-// --- DiscoveryStore-backed EnvDiscovery Tests ---
-
-func TestEnvDiscovery_WithMapStore_PublishAndDiscover(t *testing.T) {
-	store := testrig.NewMapStore()
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "map-svc", properties: testrig.Properties{"k": "v"}}
-
-	if err := d.Publish(context.Background(), svc, svc.properties); err != nil {
-		t.Fatalf("Publish failed: %v", err)
-	}
-	props, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover failed: %v", err)
-	}
-	if !found {
-		t.Error("Expected found=true")
-	}
-	if props["k"] != "v" {
-		t.Errorf("Expected k=v, got %v", props)
-	}
-}
-
-func TestEnvDiscovery_WithMapStore_Unpublish(t *testing.T) {
-	store := testrig.NewMapStore()
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "map-unpub"}
-
-	_ = d.Publish(context.Background(), svc, testrig.Properties{"k": "v"})
-	_ = d.Unpublish(context.Background(), svc)
-
-	_, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover failed: %v", err)
-	}
-	if found {
-		t.Error("Expected found=false after unpublish")
-	}
-}
-
-func TestEnvDiscovery_WithMapStore_Discover_NotFound(t *testing.T) {
-	store := testrig.NewMapStore()
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "missing"}
-
-	props, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover failed: %v", err)
-	}
-	if found {
-		t.Error("Expected found=false for empty store")
-	}
-	if props != nil {
-		t.Errorf("Expected nil props, got %v", props)
-	}
-}
-
-func TestEnvDiscovery_WithMapStore_Discover_InvalidJSON(t *testing.T) {
-	store := testrig.NewMapStore()
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "bad-json"}
-
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	_ = store.Store(key, "not-json")
-
-	_, found, err := d.Discover(context.Background(), svc)
-	if err == nil {
-		t.Fatal("Expected error from non-JSON discovery payload")
-	}
-	if found {
-		t.Error("Expected found=false on decode error")
-	}
-}
-
-func TestNewEnvDiscovery_NilStore_Panics(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("Expected panic from NewDiscovery(nil)")
-		}
-		msg := fmt.Sprintf("%v", r)
-		if !strings.Contains(msg, "non-nil DiscoveryStore") {
-			t.Errorf("Unexpected panic message: %s", msg)
-		}
-	}()
-	testrig.NewDiscovery(nil)
-}
-
-func TestEnvDiscovery_WithMapStore_Discover_DeadHostPort(t *testing.T) {
-	store := testrig.NewMapStore()
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "dead-svc"}
-
-	deadProps := testrig.Properties{
-		"dead-svc.host": "127.0.0.1",
-		"dead-svc.port": "1",
-	}
-	_ = d.Publish(context.Background(), svc, deadProps)
-
-	props, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover returned unexpected error: %v", err)
-	}
-	if found {
-		t.Error("Expected found=false for dead service")
-	}
-	if props != nil {
-		t.Errorf("Expected nil props, got %v", props)
-	}
-}
-
-func TestEnvDiscovery_WithMapStore_Discover_AliveHostPort(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Failed to start listener: %v", err)
-	}
-	defer func() { _ = ln.Close() }()
-
-	addr := ln.Addr().(*net.TCPAddr)
-	store := testrig.NewMapStore()
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "live-svc"}
-
-	liveProps := testrig.Properties{
-		"live-svc.host": "127.0.0.1",
-		"live-svc.port": fmt.Sprintf("%d", addr.Port),
-	}
-	_ = d.Publish(context.Background(), svc, liveProps)
-
-	props, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover returned unexpected error: %v", err)
-	}
-	if !found {
-		t.Error("Expected found=true for live service")
-	}
-	if props == nil {
-		t.Error("Expected non-nil props")
-	}
-}
-
-func TestNewOsEnvDiscovery_UsesOsEnv(t *testing.T) {
-	d := testrig.NewOsEnvDiscovery()
-	svc := &MockService{name: "cross-proc"}
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	t.Cleanup(func() { _ = os.Unsetenv(key) })
-
-	_ = d.Publish(context.Background(), svc, testrig.Properties{"k": "v"})
-	val, ok := os.LookupEnv(key)
-	if !ok {
-		t.Fatal("Expected env var to be set after Publish")
-	}
-	if val == "" {
-		t.Error("Expected non-empty env var value")
-	}
-}
-
-// mockErrorStore is a DiscoveryStore that returns errors.
-type mockErrorStore struct {
-	storeErr  error
-	deleteErr error
-}
-
-func (s *mockErrorStore) Load(key string) (string, bool) { return "", false }
-func (s *mockErrorStore) Store(key, value string) error  { return s.storeErr }
-func (s *mockErrorStore) Delete(key string) error        { return s.deleteErr }
-
-func TestEnvDiscovery_Publish_StoreError(t *testing.T) {
-	store := &mockErrorStore{storeErr: errors.New("store-fail")}
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "err-svc"}
-
-	err := d.Publish(context.Background(), svc, testrig.Properties{"k": "v"})
-	if err == nil {
-		t.Fatal("Expected error from Publish")
-	}
-	if !strings.Contains(err.Error(), "err-svc") {
-		t.Errorf("Expected error to contain service name, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "store-fail") {
-		t.Errorf("Expected error to contain cause, got %v", err)
-	}
-}
-
-func TestEnvDiscovery_Unpublish_DeleteError(t *testing.T) {
-	store := &mockErrorStore{deleteErr: errors.New("delete-fail")}
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "del-err-svc"}
-
-	err := d.Unpublish(context.Background(), svc)
-	if err == nil {
-		t.Fatal("Expected error from Unpublish")
-	}
-	if !strings.Contains(err.Error(), "del-err-svc") {
-		t.Errorf("Expected error to contain service name, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "delete-fail") {
-		t.Errorf("Expected error to contain cause, got %v", err)
-	}
-}
-
-func TestEnvDiscovery_EmptyStringTreatedAsNotFound(t *testing.T) {
-	store := testrig.NewMapStore()
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "empty-val"}
-
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	_ = store.Store(key, "")
-
-	props, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover failed: %v", err)
-	}
-	if found {
-		t.Error("Expected found=false for empty string value")
-	}
-	if props != nil {
-		t.Errorf("Expected nil props, got %v", props)
-	}
-}
-
-func TestEnvDiscovery_OsEnvStore_EmptyStringTreatedAsNotFound(t *testing.T) {
-	d := testrig.NewOsEnvDiscovery()
-	svc := &MockService{name: "os-empty"}
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	t.Cleanup(func() { _ = os.Unsetenv(key) })
-
-	_ = os.Setenv(key, "")
-
-	props, found, err := d.Discover(context.Background(), svc)
-	if err != nil {
-		t.Fatalf("Discover failed: %v", err)
-	}
-	if found {
-		t.Error("Expected found=false for empty string env var")
-	}
-	if props != nil {
-		t.Errorf("Expected nil props, got %v", props)
 	}
 }
 
@@ -1159,10 +752,10 @@ func TestEnv_Start_DuplicateServiceName(t *testing.T) {
 		t.Fatal("Expected error for duplicate service name")
 	}
 	if !strings.Contains(err.Error(), "duplicate service name") {
-		t.Errorf("Expected error containing 'duplicate service name', got %v", err)
+		t.Errorf("Expected 'duplicate service name', got %v", err)
 	}
 
-	// Verify env returns to stateIdle — a subsequent Start with fixed services succeeds.
+	// Verify env returns to stateIdle — a fresh env with unique services succeeds.
 	s3 := &MockService{name: "unique-svc"}
 	env2 := testrig.MustNew(testrig.With(s3))
 	if err := env2.Start(context.Background()); err != nil {
@@ -1171,149 +764,14 @@ func TestEnv_Start_DuplicateServiceName(t *testing.T) {
 	_ = env2.Stop(context.Background())
 }
 
-func TestEnvDiscovery_LivenessCheck_ExpiredContextTreatedAsNotLive(t *testing.T) {
-	store := testrig.NewMapStore()
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "deadline-svc"}
-
-	deadProps := testrig.Properties{
-		"deadline-svc.host": "127.0.0.1",
-		"deadline-svc.port": "1", // Dead port
-	}
-	_ = d.Publish(context.Background(), svc, deadProps)
-
-	// With an already-expired context, the dial fails immediately with a
-	// deadline-exceeded error and livenessCheck returns false. Discover
-	// surfaces that as found=false rather than propagating the ctx error,
-	// so the caller falls back to a fresh Start instead of aborting.
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
-	defer cancel()
-	<-ctx.Done()
-
-	_, found, err := d.Discover(ctx, svc)
-	if err != nil {
-		t.Fatalf("Discover returned error: %v", err)
-	}
-	if found {
-		t.Error("Expected found=false for expired-ctx liveness check")
-	}
-}
-
-// --- Task 4: WithDiscovery builder tests ---
-
-func TestEnv_WithDiscovery(t *testing.T) {
-	store := testrig.NewMapStore()
-	d := testrig.NewDiscovery(store)
-	svc := &MockService{name: "wd-svc", properties: testrig.Properties{"k": "v"}}
-
-	env := testrig.MustNew(testrig.WithDiscovery(d), testrig.With(svc))
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	defer func() { _ = env.Stop(context.Background()) }()
-
-	// Verify published to the custom store, not OS env.
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	val, ok := store.Load(key)
-	if !ok || val == "" {
-		t.Error("Expected service to be published in custom store")
-	}
-}
-
-func TestEnv_WithDiscovery_NilPanics(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("Expected panic from WithDiscovery(nil)")
-		}
-		msg := fmt.Sprintf("%v", r)
-		if !strings.Contains(msg, "non-nil DiscoveryProvider") {
-			t.Errorf("Unexpected panic message: %s", msg)
-		}
-	}()
-	testrig.MustNew(testrig.WithDiscovery(nil))
-}
-
-func TestEnv_WithDiscovery_CalledTwice_LastWins(t *testing.T) {
-	store1 := testrig.NewMapStore()
-	store2 := testrig.NewMapStore()
-	d1 := testrig.NewDiscovery(store1)
-	d2 := testrig.NewDiscovery(store2)
-	svc := &MockService{name: "last-wins", properties: testrig.Properties{"k": "v"}}
-
-	env := testrig.MustNew(testrig.WithDiscovery(d1), testrig.WithDiscovery(d2), testrig.With(svc))
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	defer func() { _ = env.Stop(context.Background()) }()
-
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	_, ok1 := store1.Load(key)
-	_, ok2 := store2.Load(key)
-	if ok1 {
-		t.Error("store1 should NOT have the service (d2 was last)")
-	}
-	if !ok2 {
-		t.Error("store2 should have the service (d2 was last)")
-	}
-}
-
-func TestEnv_DefaultDiscovery_NoOsEnvMutation(t *testing.T) {
-	svc := &MockService{name: "no-env-svc", properties: testrig.Properties{"k": "v"}}
-
-	beforeLen := len(os.Environ())
-
-	env := testrig.MustNew(testrig.With(svc))
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-
-	// Check no TESTRIG_SERVICE_* env vars after Start
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "TESTRIG_SERVICE_") {
-			t.Errorf("Found unexpected env var: %s", e)
-		}
-	}
-
-	if err := env.Stop(context.Background()); err != nil {
-		t.Fatalf("Stop failed: %v", err)
-	}
-
-	// Check no TESTRIG_SERVICE_* env vars after Stop
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "TESTRIG_SERVICE_") {
-			t.Errorf("Found unexpected env var after Stop: %s", e)
-		}
-	}
-
-	afterLen := len(os.Environ())
-	if afterLen > beforeLen {
-		t.Errorf("os.Environ() grew: before=%d, after=%d", beforeLen, afterLen)
-	}
-}
-
-func TestEnv_WithDiscovery_BuilderChain(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	d := testrig.NewDiscovery(testrig.NewMapStore())
-	svc := &MockService{name: "chain-svc"}
-
-	// Verify builder chain returns *Env and works end-to-end.
-	env := testrig.MustNew(testrig.WithDiscovery(d), testrig.With(svc), testrig.WithLogger(logger))
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	_ = env.Stop(context.Background())
-}
-
 func TestEnv_WithLogger_NilPanics(t *testing.T) {
 	defer func() {
 		r := recover()
 		if r == nil {
 			t.Fatal("Expected panic from WithLogger(nil)")
 		}
-		msg := fmt.Sprintf("%v", r)
-		if !strings.Contains(msg, "non-nil") {
-			t.Errorf("Unexpected panic message: %s", msg)
+		if !strings.Contains(asString(r), "non-nil") {
+			t.Errorf("Unexpected panic message: %v", r)
 		}
 	}()
 	testrig.MustNew(testrig.WithLogger(nil))
@@ -1321,8 +779,7 @@ func TestEnv_WithLogger_NilPanics(t *testing.T) {
 
 func TestEnv_WithHooks_NilHookPanics(t *testing.T) {
 	defer func() {
-		r := recover()
-		if r == nil {
+		if recover() == nil {
 			t.Fatal("Expected panic from WithHooks(nil)")
 		}
 	}()
@@ -1336,9 +793,8 @@ func TestEnv_WithHooks_NilInMiddlePanics(t *testing.T) {
 		if r == nil {
 			t.Fatal("Expected panic from WithHooks(valid, nil)")
 		}
-		msg := fmt.Sprintf("%v", r)
-		if !strings.Contains(msg, "index 1") {
-			t.Errorf("Expected panic to mention index 1, got: %s", msg)
+		if !strings.Contains(asString(r), "index 1") {
+			t.Errorf("Expected panic to mention index 1, got: %v", r)
 		}
 	}()
 	testrig.MustNew(testrig.WithHooks(valid, nil))
@@ -1346,8 +802,7 @@ func TestEnv_WithHooks_NilInMiddlePanics(t *testing.T) {
 
 func TestEnv_With_NilServicePanics(t *testing.T) {
 	defer func() {
-		r := recover()
-		if r == nil {
+		if recover() == nil {
 			t.Fatal("Expected panic from With(nil)")
 		}
 	}()
@@ -1361,68 +816,13 @@ func TestEnv_With_NilInMiddlePanics(t *testing.T) {
 		if r == nil {
 			t.Fatal("Expected panic from With(valid, nil)")
 		}
-		msg := fmt.Sprintf("%v", r)
-		if !strings.Contains(msg, "index 1") {
-			t.Errorf("Expected panic to mention index 1, got: %s", msg)
+		if !strings.Contains(asString(r), "index 1") {
+			t.Errorf("Expected panic to mention index 1, got: %v", r)
 		}
 	}()
 	testrig.MustNew(testrig.With(valid, nil))
 }
 
-// --- Task 4: Integration tests ---
-
-func TestEnv_Reuse_SharedMapStore(t *testing.T) {
-	sharedStore := testrig.NewMapStore()
-	svc := &MockService{name: "shared-svc", properties: testrig.Properties{"p": "val"}}
-
-	env1 := testrig.MustNew(testrig.WithDiscovery(testrig.NewDiscovery(sharedStore)), testrig.With(svc))
-	if err := env1.Start(context.Background()); err != nil {
-		t.Fatalf("env1 Start failed: %v", err)
-	}
-	// Keep env1 running so discovery data persists.
-
-	env2 := testrig.MustNew(testrig.WithDiscovery(testrig.NewDiscovery(sharedStore)), testrig.With(svc))
-	if err := env2.Start(context.Background()); err != nil {
-		t.Fatalf("env2 Start failed: %v", err)
-	}
-
-	props := env2.Properties()
-	if props["p"] != "val" {
-		t.Errorf("Expected p=val from reused service, got %v", props)
-	}
-
-	_ = env2.Stop(context.Background())
-	_ = env1.Stop(context.Background())
-}
-
-func TestEnv_Isolation_SeparateMapStores(t *testing.T) {
-	svc := &MockService{name: "iso-svc", properties: testrig.Properties{"p": "val"}}
-
-	env1 := testrig.MustNew(testrig.With(svc))
-	if err := env1.Start(context.Background()); err != nil {
-		t.Fatalf("env1 Start failed: %v", err)
-	}
-	defer func() { _ = env1.Stop(context.Background()) }()
-
-	// env2 uses default New() which has its own MapStore — should NOT discover env1's service.
-	var started2 bool
-	svc2 := &MockService{name: "iso-svc", properties: testrig.Properties{"p": "val2"}, onStart: func() { started2 = true }}
-	env2 := testrig.MustNew(testrig.With(svc2))
-	if err := env2.Start(context.Background()); err != nil {
-		t.Fatalf("env2 Start failed: %v", err)
-	}
-	defer func() { _ = env2.Stop(context.Background()) }()
-
-	if !started2 {
-		t.Error("svc2 should have started fresh (separate store), not been reused")
-	}
-}
-
-// --- Immutability: builder copy-on-write ---
-
-// TestEnvBuilderBranching verifies that builder methods (With, WithName, etc.)
-// return independent copies of Env, so branching from a base Env does not
-// cause shared state between independently-built environments.
 func TestEnvBuilderBranching(t *testing.T) {
 	svcA := &MockService{name: "a"}
 	svcB := &MockService{name: "b"}
@@ -1440,75 +840,16 @@ func TestEnvBuilderBranching(t *testing.T) {
 	if envB.Name() != "B" {
 		t.Errorf("envB.Name() = %q, want %q", envB.Name(), "B")
 	}
-
-	// Start each env and verify independent service sets.
-	if err := envA.Start(context.Background()); err != nil {
-		t.Fatalf("envA.Start() failed: %v", err)
-	}
-	defer func() { _ = envA.Stop(context.Background()) }()
-
-	if err := envB.Start(context.Background()); err != nil {
-		t.Fatalf("envB.Start() failed: %v", err)
-	}
-	defer func() { _ = envB.Stop(context.Background()) }()
 }
 
-// TestEnvBuilderBranching_DefaultDiscoveryIsolation verifies that envs built
-// from the same option set get isolated discovery stores by default.
-// Without isolation, envB would discover svcA from envA's store and skip Start.
-func TestEnvBuilderBranching_DefaultDiscoveryIsolation(t *testing.T) {
-	var startCount int
-	svcA := &MockService{
-		name:       "shared",
-		properties: testrig.Properties{"k": "v"},
-		onStart:    func() { startCount++ },
-	}
-
-	envA := testrig.MustNew(testrig.WithName("A"), testrig.With(svcA))
-	envB := testrig.MustNew(testrig.WithName("B"), testrig.With(svcA))
-
-	if err := envA.Start(context.Background()); err != nil {
-		t.Fatalf("envA.Start() failed: %v", err)
-	}
-	defer func() { _ = envA.Stop(context.Background()) }()
-
-	if err := envB.Start(context.Background()); err != nil {
-		t.Fatalf("envB.Start() failed: %v", err)
-	}
-	defer func() { _ = envB.Stop(context.Background()) }()
-
-	if startCount != 2 {
-		t.Errorf("svcA.Start() called %d times, want 2 (each env should have isolated discovery)", startCount)
-	}
-}
-
-// TestEnvBuilderBranching_ExplicitDiscoveryShared verifies that when two envs
-// are built with the same explicit shared discovery, they reuse services as
-// expected.
-func TestEnvBuilderBranching_ExplicitDiscoveryShared(t *testing.T) {
-	var startCount int
-	svcA := &MockService{
-		name:       "shared",
-		properties: testrig.Properties{"k": "v"},
-		onStart:    func() { startCount++ },
-	}
-
-	sharedStore := testrig.NewMapStore()
-	sharedDiscovery := testrig.NewDiscovery(sharedStore)
-	envA := testrig.MustNew(testrig.WithName("A"), testrig.WithDiscovery(sharedDiscovery), testrig.With(svcA))
-	envB := testrig.MustNew(testrig.WithName("B"), testrig.WithDiscovery(sharedDiscovery), testrig.With(svcA))
-
-	if err := envA.Start(context.Background()); err != nil {
-		t.Fatalf("envA.Start() failed: %v", err)
-	}
-	defer func() { _ = envA.Stop(context.Background()) }()
-
-	if err := envB.Start(context.Background()); err != nil {
-		t.Fatalf("envB.Start() failed: %v", err)
-	}
-	defer func() { _ = envB.Stop(context.Background()) }()
-
-	if startCount != 1 {
-		t.Errorf("svcA.Start() called %d times, want 1 (explicit shared discovery should reuse)", startCount)
+// asString flattens any panic value to its string form.
+func asString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case error:
+		return x.Error()
+	default:
+		return ""
 	}
 }

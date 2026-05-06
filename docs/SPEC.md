@@ -4,7 +4,7 @@ This document describes the public API and runtime semantics of `testrig` in its
 
 ## Purpose
 
-`testrig` is a Go library for building and managing multi-service test environments. It orchestrates service lifecycles with dependency awareness, propagates configuration between services as they come up, and supports cross-env service reuse so the same containerised dependencies can be shared across independent `testrig.Env` instances within a process (and, with the OS-env-backed provider, across child processes spawned from the test).
+`testrig` is a Go library for building and managing multi-service test environments. It orchestrates service lifecycles with dependency awareness and propagates configuration between services as they come up, so an integration test can declare *what* it needs (e.g. "a Postgres, a WireMock") and let the framework bring them up in the right order, expose their connection details to the test, and tear them down cleanly.
 
 The framework is designed for integration tests that need real services (databases, mocks, etc.) rather than for unit tests.
 
@@ -17,7 +17,7 @@ The framework is designed for integration tests that need real services (databas
 ## Project Layout
 
 ```
-.                         — core framework (Env, Service, DiscoveryStore, SetEnvVars)
+.                         — core framework (Env, Service, SetEnvVars)
 services/                 — pre-configured services (each implements testrig.Service)
   ├── postgres/           — PostgreSQL service
   └── wiremock/           — WireMock service
@@ -51,7 +51,6 @@ Missing keys return errors. The map itself is plain — callers can range over i
 ```go
 type Service interface {
     Name() string
-    Identifier() string
     Dependencies() []string
     Start(ctx context.Context, envCtx EnvContext) (Properties, error)
     Stop(ctx context.Context) error
@@ -60,11 +59,10 @@ type Service interface {
 
 A `Service` is a stateful dependency with a lifecycle. The framework calls `Start` once all dependencies are running, and `Stop` once all dependents have stopped.
 
-- `Name()` — unique within the environment; used in logs, dependency wiring, and stop-order coordination. **Per-env scope.**
-- `Identifier()` — content-addressable string; identical configurations across processes produce identical identifiers, enabling cross-env and cross-process reuse via discovery. **Global scope.** It is conventional but not required to keep `Identifier` independent of `Name` so two differently-named instances of the same configuration can share a backing container.
+- `Name()` — unique within the environment; used in logs, dependency wiring, and stop-order coordination.
 - `Dependencies()` — names of services that must be running before this one starts. Cycles are rejected at `Env.Start()`.
 - `Start` returns the properties this service contributes to the shared `Properties` map.
-- `Stop` is only called for services this `Env` actually started (not for reused services).
+- `Stop` is invoked in reverse-dependency order. A `Service` is owned by the `Env` it was added to; passing the same instance to multiple Envs is a programmer error.
 
 ### `EnvContext`
 
@@ -89,7 +87,6 @@ The orchestrator. Constructed via `New(opts ...Option) (*Env, error)` (or `MustN
 env, err := testrig.New(
     testrig.WithName("integration-tests"),
     testrig.WithLogger(myLogger),
-    testrig.WithDiscovery(testrig.NewOsEnvDiscovery()),
     testrig.WithHooks(myHook),
     testrig.With(svc1, svc2, svc3),
 )
@@ -107,9 +104,8 @@ All options validate their input and return an error from `New` rather than pani
 
 | Option | Semantics |
 |---|---|
-| `New()` (no options) | Defaults: name `"testenv"`, in-process `MapStore` discovery (per-`Start()` isolation), `slog.Default()` logger, no hooks, no services. |
+| `New()` (no options) | Defaults: name `"testenv"`, `slog.Default()` logger, no hooks, no services. |
 | `WithName(string)` | Last-wins. Errors on empty. |
-| `WithDiscovery(DiscoveryProvider)` | Last-wins. Errors on nil. |
 | `WithLogger(*slog.Logger)` | Last-wins. Errors on nil. |
 | `WithHooks(...LifecycleHook)` | **Accumulative** — appends across calls. Errors if any hook is nil. |
 | `With(...Service)` | **Accumulative** — appends across calls. Errors if any service is nil. |
@@ -125,8 +121,8 @@ envB := testrig.MustNew(append(baseOpts, testrig.WithName("B"))...)
 #### Lifecycle methods
 
 - `Start(ctx) error` — validates dependencies, then starts all services concurrently, each blocking on its declared dependencies. Aborts and rolls back via `Stop` on first error. Re-running on a still-running env returns an error. Re-running on an already-stopped env is allowed (state is reset on each `Start`).
-- `Stop(ctx) error` — stops services in reverse-dependency order, only for services this `Env` started (reused services are left alone). Calls `Unpublish` on the discovery provider for each stopped service so dead references are not reused. Idempotent on idle envs.
-- `Properties() Properties` — snapshot of current properties. Returns a copy.
+- `Stop(ctx) error` — stops services in reverse-dependency order. Idempotent on idle envs and under concurrent callers.
+- `Properties() Properties` — snapshot of current properties. Returns a copy. Returns an empty (non-nil) map when the env is idle (never started, or stopped).
 - `Name() string`
 
 #### State machine
@@ -135,71 +131,22 @@ envB := testrig.MustNew(append(baseOpts, testrig.WithName("B"))...)
 
 Calling `Start` from `stateStarting` or `stateRunning` returns an error. Calling `Stop` from any state is safe.
 
-### Discovery
-
-Discovery enables service reuse: if a service with the same `Identifier()` was already published to the configured store and is still alive, this `Env` reuses its properties instead of starting a new container.
-
-The scope of "already published" depends on the discovery provider:
-
-| Provider | Scope | Use case |
-|---|---|---|
-| `NewDiscovery(NewMapStore())` (default) | This `Env` only — the default factory creates a fresh store per `Start()`. | Test isolation. |
-| `NewDiscovery(<shared store>)` | All envs in the current process that share the store. | Multiple `Env` instances reusing the same backing services within one test binary. |
-| `NewOsEnvDiscovery()` | This process and any child processes spawned afterward. | Test that spawns a subprocess (e.g. CLI under test) which needs to discover services started by the test. |
-
-> **Not supported:** sharing services across sibling processes — e.g. between the per-package binaries that `go test ./...` runs. The OS-env-backed provider relies on env-var inheritance (parent → child), which does not propagate to siblings.
-
-#### `DiscoveryProvider`
-
-```go
-type DiscoveryProvider interface {
-    Discover(ctx, Service) (Properties, bool, error)
-    Publish(ctx, Service, Properties) error
-    Unpublish(ctx, Service) error
-}
-```
-
-Two factories provided:
-- `NewDiscovery(store DiscoveryStore) DiscoveryProvider` — backed by any `DiscoveryStore`.
-- `NewOsEnvDiscovery() DiscoveryProvider` — convenience: `NewDiscovery(NewOsEnvStore())`.
-
-Discovery key prefix: `TESTRIG_SERVICE_<Identifier>`.
-
-#### Liveness check
-
-After loading a published entry, discovery performs a TCP-dial liveness check using well-known property keys `<svcName>.host` and `<svcName>.port`. The dial respects the caller's context, capped at 2 s so an unbounded ctx cannot stall discovery on a slow-failing host. If those keys are not present, the check is skipped and reuse proceeds. If the dial fails (or the ctx is already expired), the entry is treated as not live and the service is started fresh.
-
-#### `DiscoveryStore`
-
-```go
-type DiscoveryStore interface {
-    Load(key string) (string, bool)
-    Store(key, value string) error
-    Delete(key string) error
-}
-```
-
-Two implementations provided:
-
-| Constructor | Backing | Use case |
-|---|---|---|
-| `NewMapStore()` | In-process map (sync-safe). | Default. Test isolation; each `Env` gets its own store on every `Start()`. No OS env mutation. |
-| `NewOsEnvStore()` | OS environment variables (`os.Setenv`/`Getenv`/`Unsetenv`). | Opt-in via `NewOsEnvDiscovery()`. Visible to child processes spawned from the test. |
-
-> Thread-safety caveat: `os.Setenv`/`Getenv` are not safe for concurrent use on all platforms. testrig serializes its own writes through a package-level mutex; this does not protect against env mutations made outside testrig.
-
 ### Lifecycle Hooks
 
 ```go
 type LifecycleHook interface {
-    OnStart(ctx, envCtx EnvContext) error
-    OnStop(ctx, envCtx EnvContext) error
+    AfterStart(ctx, envCtx EnvContext) error
+    AfterStop(ctx, envCtx EnvContext) error
 }
 ```
 
-Hooks fire **after** all services in the `Env` have started (and **before** Stop is called for shutdown). They receive a stable, immutable `EnvContext` snapshot taken before `properties` is cleared, so `OnStop` sees the same view as `OnStart`. An `OnStart` failure aborts `Start` and triggers full `Stop`. `OnStop` failures are joined into the returned error so cleanup-style hooks always run.
+`AfterStart` fires once every service has started successfully and the env has transitioned to running. It is part of the `Start` sequence: returning an error aborts `Start` and triggers full rollback (`Stop` is invoked).
 
-Hooks are an opt-in convenience for cross-cutting concerns that span the whole env (e.g. running migrations after Postgres is up, writing a debug artifact, emitting env-startup metrics). Most setup is better expressed as a plain `Service` with `Dependencies` — hooks are most useful when you need OnStop to run *after* every service has stopped, which a service's own `Stop` cannot model.
+`AfterStop` fires once every service has stopped, as part of the `Stop` sequence. All registered hooks run even if a previous hook returned an error, so cleanup-style hooks always get a chance to execute. Returned errors are joined into the error returned by `Env.Stop`.
+
+Hooks receive a stable, immutable `EnvContext` snapshot taken before `properties` is cleared, so `AfterStop` sees the same view as `AfterStart`.
+
+Hooks are an opt-in convenience for cross-cutting concerns that span the whole env (e.g. running migrations after Postgres is up, writing a debug artifact, emitting env-startup metrics). Most setup is better expressed as a plain `Service` with `Dependencies` — hooks are most useful when you need work that runs *after* every service has stopped, which a service's own `Stop` cannot model.
 
 ### `SetEnvVars`
 
@@ -242,8 +189,9 @@ See `examples/viper-app` and `examples/koanf-app` for full patterns.
 Each package under `services/` provides a service type — a pre-configured test harness for a specific dependency. Each:
 
 - Implements `testrig.Service`, so it can be added to an `Env` via `env.With(...)`.
-- Is constructed with `New(name)` and configured via chainable `With*` methods that mutate and return `*<Type>` (no separate Builder type).
-- Exposes typed-client accessors directly on the value (e.g. `*postgres.Postgres.DSN()`, `.DB(ctx)`; `*wiremock.WireMock.URL()`, `.Client()`). These are valid only after `Env.Start()`.
+- Is constructed with `New(name)` and configured via chainable `With*` methods that mutate and return the value (no separate Builder type).
+- Exposes typed-client accessors directly (e.g. `*postgres.Postgres.DSN()`, `.DB(ctx)`; `*wiremock.WireMock.URL()`, `.Client()`). These are valid only after `Env.Start()`.
+- Publishes its outputs as `Properties` under `<name>.<field>` keys by default; each key can be overridden via a `WithXxxPropertyName` setter so the service publishes directly under the application's expected config keys.
 
 Configuration methods accept primitive args and do not panic on nil.
 
@@ -252,8 +200,8 @@ Configuration methods accept primitive args and do not panic on nil.
 A PostgreSQL service backed by testcontainers-go.
 
 - Defaults: image `postgres:16-alpine`, db `testdb`, user/password `user`/`password`.
-- Properties exported under fixed keys: `<name>.host`, `<name>.port`, `<name>.user`, `<name>.password`, `<name>.dbname`, `<name>.dsn`. The DSN is built via `net/url` so credentials and db names with special characters round-trip correctly.
-- Identifier is a SHA-256 hash of a NUL-separated config encoding (image, tag, db, user, password) — robust against any character in any field. **Name is intentionally not part of the hash:** two Postgres instances with the same configuration but different display Names are equivalent for cross-env reuse. Use distinct configuration (different db name, image tag, etc.) to force isolation.
+- Default property keys: `<name>.host`, `<name>.port`, `<name>.user`, `<name>.password`, `<name>.dbname`, `<name>.dsn`. Each is independently overridable via `WithHostPropertyName`, `WithPortPropertyName`, `WithUsernamePropertyName`, `WithPasswordPropertyName`, `WithDatabasePropertyName`, `WithDSNPropertyName` — typically used to publish the DSN under the application's expected key (e.g. `DATABASE_URL`) so no bridging is needed at the test level.
+- The DSN is built via `net/url` so credentials and db names with special characters round-trip correctly.
 - `*postgres.Postgres` exposes `DSN() string` and `DB(ctx) (*sql.DB, error)`. `DB` uses the `pgx` stdlib driver and Pings the connection before returning, so failures surface at the call site rather than on first query.
 
 ### `services/wiremock`
@@ -261,8 +209,7 @@ A PostgreSQL service backed by testcontainers-go.
 A WireMock service backed by testcontainers-go.
 
 - Default image `wiremock/wiremock:3.2.0`.
-- Single property exported under the fixed key `<name>.url`.
-- Identifier is a SHA-256 hash of (image, tag); Name is not part of the hash (same rationale as Postgres).
+- Default property key: `<name>.url`. Override via `WithURLPropertyName`.
 - `*wiremock.WireMock` exposes `URL() string` and `Client() *wiremock.Client`.
 
 ## Concurrency & Safety
@@ -277,7 +224,6 @@ A WireMock service backed by testcontainers-go.
 - Tests use the `_test` package suffix (black-box testing) by default, with white-box `internals_test.go` files where private behaviour needs coverage.
 - No mocking frameworks: hand-written mocks live in test files or `internal/testutil`.
 - Options validate their input and return errors from `New`; use `MustNew` if you want a panic on misconfiguration.
-- Services published to discovery serialise their `Properties` as JSON.
 
 ## Build & Test
 

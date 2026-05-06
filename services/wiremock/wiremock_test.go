@@ -15,9 +15,6 @@ func TestWireMock_Defaults(t *testing.T) {
 	if tk.Name() != "test-mock" {
 		t.Errorf("Unexpected name: %s", tk.Name())
 	}
-	if !strings.HasPrefix(tk.Identifier(), "wiremock:") {
-		t.Errorf("Unexpected identifier prefix: %s", tk.Identifier())
-	}
 	if len(tk.Dependencies()) != 0 {
 		t.Error("Expected no dependencies")
 	}
@@ -50,25 +47,20 @@ func TestWireMock_Configured(t *testing.T) {
 	}
 }
 
-func TestWireMock_Identifier_StableAndCollisionResistant(t *testing.T) {
-	a := wiremock.New("svc")
-	b := wiremock.New("svc")
-	c := wiremock.New("svc").WithTag("3.3.1")
+func TestWireMock_URLPropertyName_Override(t *testing.T) {
+	tk := wiremock.New("wm").WithURLPropertyName("MOCK_URL")
 
-	if a.Identifier() != b.Identifier() {
-		t.Error("Same config should yield same identifier")
+	props, err := tk.Start(context.Background(), &testutil.MockEnvContext{})
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
 	}
-	if a.Identifier() == c.Identifier() {
-		t.Error("Different tag should yield different identifier")
+	defer func() { _ = tk.Stop(context.Background()) }()
+
+	if props["MOCK_URL"] == "" {
+		t.Error("MOCK_URL property not published under custom key")
 	}
-}
-
-func TestWireMock_Identifier_IndependentOfName(t *testing.T) {
-	a := wiremock.New("primary")
-	b := wiremock.New("replica")
-
-	if a.Identifier() != b.Identifier() {
-		t.Error("Identifier should be independent of Name; same config must yield same identifier regardless of display name")
+	if _, ok := props["wm.url"]; ok {
+		t.Error("default key wm.url should not be published when overridden")
 	}
 }
 

@@ -7,50 +7,15 @@ import (
 
 // envConfig holds the result of applying Options before Env construction.
 type envConfig struct {
-	name         string
-	services     []Service
-	newDiscovery func() DiscoveryProvider
-	logger       *slog.Logger
-	hooks        []LifecycleHook
+	name     string
+	services []Service
+	logger   *slog.Logger
+	hooks    []LifecycleHook
 }
 
 // Option configures an Env at construction time. Options are applied in order
 // by New; an option may return an error to reject invalid input.
 type Option func(*envConfig) error
-
-// New creates a new Env with isolation-safe defaults (in-process MapStore for
-// discovery, slog.Default() logger), then applies the given options. Returns
-// an error if any option rejects its input.
-func New(opts ...Option) (*Env, error) {
-	cfg := envConfig{
-		name:         "testenv",
-		newDiscovery: func() DiscoveryProvider { return NewDiscovery(NewMapStore()) },
-		logger:       slog.Default(),
-	}
-	for _, opt := range opts {
-		if err := opt(&cfg); err != nil {
-			return nil, err
-		}
-	}
-	return &Env{
-		name:         cfg.name,
-		services:     cfg.services,
-		newDiscovery: cfg.newDiscovery,
-		logger:       cfg.logger,
-		hooks:        cfg.hooks,
-		state:        stateIdle,
-	}, nil
-}
-
-// MustNew is like New but panics on error. Convenient for tests and other
-// places where invalid configuration is a static, programmer-checked condition.
-func MustNew(opts ...Option) *Env {
-	env, err := New(opts...)
-	if err != nil {
-		panic(err)
-	}
-	return env
-}
 
 // WithName sets a custom name for the environment, used in logs and error
 // messages. Returns an error if name is empty.
@@ -60,26 +25,6 @@ func WithName(name string) Option {
 			return fmt.Errorf("testrig: WithName requires a non-empty name")
 		}
 		c.name = name
-		return nil
-	}
-}
-
-// WithDiscovery replaces the discovery provider. The same provider is reused
-// across every Start of this Env — that is the point of supplying one
-// explicitly, since cross-process and cross-env reuse rely on a stable
-// underlying store.
-//
-// Contrast with the default: New() without WithDiscovery installs a factory
-// that produces a fresh in-process MapStore per Start, so independent envs
-// are isolated by construction.
-//
-// Returns an error if d is nil.
-func WithDiscovery(d DiscoveryProvider) Option {
-	return func(c *envConfig) error {
-		if d == nil {
-			return fmt.Errorf("testrig: WithDiscovery requires a non-nil DiscoveryProvider")
-		}
-		c.newDiscovery = func() DiscoveryProvider { return d }
 		return nil
 	}
 }

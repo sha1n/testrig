@@ -3,7 +3,6 @@ package testrig_test
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,39 +12,9 @@ import (
 	"github.com/sha1n/testrig"
 )
 
-// --- Mock DiscoveryProvider for error injection ---
-
-type mockDiscoveryProvider struct {
-	discoverErr  error
-	publishErr   error
-	unpublishErr error
-	inner        testrig.DiscoveryProvider
-}
-
-func (m *mockDiscoveryProvider) Discover(ctx context.Context, svc testrig.Service) (testrig.Properties, bool, error) {
-	if m.discoverErr != nil {
-		return nil, false, m.discoverErr
-	}
-	return m.inner.Discover(ctx, svc)
-}
-
-func (m *mockDiscoveryProvider) Publish(ctx context.Context, svc testrig.Service, props testrig.Properties) error {
-	if m.publishErr != nil {
-		return m.publishErr
-	}
-	return m.inner.Publish(ctx, svc, props)
-}
-
-func (m *mockDiscoveryProvider) Unpublish(ctx context.Context, svc testrig.Service) error {
-	if m.unpublishErr != nil {
-		return m.unpublishErr
-	}
-	return m.inner.Unpublish(ctx, svc)
-}
-
 // --- Full Lifecycle ---
 
-func TestIntegration_FullLifecycle_DefaultIsolation(t *testing.T) {
+func TestIntegration_FullLifecycle(t *testing.T) {
 	s1 := &MockService{name: "svc1", properties: testrig.Properties{"a": "1"}}
 	s2 := &MockService{name: "svc2", deps: []string{"svc1"}, properties: testrig.Properties{"b": "2"}}
 
@@ -59,46 +28,14 @@ func TestIntegration_FullLifecycle_DefaultIsolation(t *testing.T) {
 		t.Errorf("Unexpected properties: %v", props)
 	}
 
-	// Verify no OS env vars set.
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "TESTRIG_SERVICE_") {
-			t.Errorf("Found unexpected env var: %s", e)
-		}
-	}
-
 	if err := env.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop failed: %v", err)
-	}
-}
-
-func TestIntegration_FullLifecycle_CrossProcessDiscovery(t *testing.T) {
-	svc := &MockService{name: "cross-svc", properties: testrig.Properties{"k": "v"}}
-	key := "TESTRIG_SERVICE_" + svc.Identifier()
-	t.Cleanup(func() { _ = os.Unsetenv(key) })
-
-	env := testrig.MustNew(testrig.WithDiscovery(testrig.NewOsEnvDiscovery()), testrig.With(svc))
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-
-	val, ok := os.LookupEnv(key)
-	if !ok || val == "" {
-		t.Error("Expected OS env var to be set after Start")
-	}
-
-	if err := env.Stop(context.Background()); err != nil {
-		t.Fatalf("Stop failed: %v", err)
-	}
-
-	_, ok = os.LookupEnv(key)
-	if ok {
-		t.Error("Expected OS env var to be cleared after Stop")
 	}
 }
 
 // --- Isolation ---
 
-func TestIntegration_ParallelIsolation(t *testing.T) {
+func TestIntegration_ParallelEnvsAreIndependent(t *testing.T) {
 	t.Parallel()
 
 	t.Run("env1", func(t *testing.T) {
@@ -112,11 +49,6 @@ func TestIntegration_ParallelIsolation(t *testing.T) {
 
 		if env.Properties()["x"] != "env1-val" {
 			t.Error("env1 has wrong property value")
-		}
-		for _, e := range os.Environ() {
-			if strings.HasPrefix(e, "TESTRIG_SERVICE_") {
-				t.Errorf("env1 leaked env var: %s", e)
-			}
 		}
 	})
 
@@ -135,52 +67,6 @@ func TestIntegration_ParallelIsolation(t *testing.T) {
 	})
 }
 
-func TestIntegration_SharedDiscovery_Reuse(t *testing.T) {
-	sharedStore := testrig.NewMapStore()
-	svc := &MockService{name: "shared-reuse", properties: testrig.Properties{"p": "val"}}
-
-	env1 := testrig.MustNew(testrig.WithDiscovery(testrig.NewDiscovery(sharedStore)), testrig.With(svc))
-	if err := env1.Start(context.Background()); err != nil {
-		t.Fatalf("env1 Start failed: %v", err)
-	}
-
-	env2 := testrig.MustNew(testrig.WithDiscovery(testrig.NewDiscovery(sharedStore)), testrig.With(svc))
-	if err := env2.Start(context.Background()); err != nil {
-		t.Fatalf("env2 Start failed: %v", err)
-	}
-
-	if env2.Properties()["p"] != "val" {
-		t.Error("env2 should have reused properties from env1")
-	}
-
-	_ = env2.Stop(context.Background())
-	_ = env1.Stop(context.Background())
-}
-
-func TestIntegration_SharedDiscovery_Unpublish_Prevents_Reuse(t *testing.T) {
-	sharedStore := testrig.NewMapStore()
-	var started2 bool
-	svc := &MockService{name: "unpub-reuse", properties: testrig.Properties{"p": "val"}}
-
-	env1 := testrig.MustNew(testrig.WithDiscovery(testrig.NewDiscovery(sharedStore)), testrig.With(svc))
-	if err := env1.Start(context.Background()); err != nil {
-		t.Fatalf("env1 Start failed: %v", err)
-	}
-	// Stop unpublishes the service.
-	_ = env1.Stop(context.Background())
-
-	svc2 := &MockService{name: "unpub-reuse", properties: testrig.Properties{"p": "fresh"}, onStart: func() { started2 = true }}
-	env2 := testrig.MustNew(testrig.WithDiscovery(testrig.NewDiscovery(sharedStore)), testrig.With(svc2))
-	if err := env2.Start(context.Background()); err != nil {
-		t.Fatalf("env2 Start failed: %v", err)
-	}
-	defer func() { _ = env2.Stop(context.Background()) }()
-
-	if !started2 {
-		t.Error("svc2 should have started fresh (env1 unpublished)")
-	}
-}
-
 // --- Error Handling ---
 
 func TestIntegration_ServiceStartError_PartialRollback(t *testing.T) {
@@ -195,50 +81,6 @@ func TestIntegration_ServiceStartError_PartialRollback(t *testing.T) {
 	}
 	if !stopped1 {
 		t.Error("svc1 should have been stopped (rollback)")
-	}
-}
-
-func TestIntegration_DiscoveryPublishError(t *testing.T) {
-	var stopped bool
-	svc := &MockService{name: "pub-err-svc", properties: testrig.Properties{"k": "v"}, onStop: func() { stopped = true }}
-
-	dp := &mockDiscoveryProvider{
-		publishErr: errors.New("publish-fail"),
-		inner:      testrig.NewDiscovery(testrig.NewMapStore()),
-	}
-
-	env := testrig.MustNew(testrig.WithDiscovery(dp), testrig.With(svc))
-	err := env.Start(context.Background())
-	if err == nil {
-		t.Fatal("Expected error from Publish")
-	}
-	if !strings.Contains(err.Error(), "publish-fail") {
-		t.Errorf("Expected publish error, got %v", err)
-	}
-	if !stopped {
-		t.Error("Service should have been rolled back")
-	}
-}
-
-func TestIntegration_DiscoveryUnpublishError(t *testing.T) {
-	svc := &MockService{name: "unpub-err-svc", properties: testrig.Properties{"k": "v"}}
-
-	dp := &mockDiscoveryProvider{
-		unpublishErr: errors.New("unpublish-fail"),
-		inner:        testrig.NewDiscovery(testrig.NewMapStore()),
-	}
-
-	env := testrig.MustNew(testrig.WithDiscovery(dp), testrig.With(svc))
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-
-	err := env.Stop(context.Background())
-	if err == nil {
-		t.Fatal("Expected error from Stop")
-	}
-	if !strings.Contains(err.Error(), "unpublish-fail") {
-		t.Errorf("Expected unpublish error, got %v", err)
 	}
 }
 
@@ -295,7 +137,6 @@ func TestIntegration_ContextCancelDuringStart(t *testing.T) {
 	env := testrig.MustNew(testrig.With(svc))
 
 	ctx, cancel := context.WithCancel(context.Background())
-
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
@@ -321,7 +162,6 @@ func TestIntegration_StartRetryAfterFailure(t *testing.T) {
 		t.Fatal("Expected first Start to fail")
 	}
 
-	// Clear the error and retry.
 	svc.startErr = nil
 	svc.properties = testrig.Properties{"k": "v"}
 
@@ -335,9 +175,12 @@ func TestIntegration_StartRetryAfterFailure(t *testing.T) {
 	}
 }
 
-func TestIntegration_RestartClearsOldProperties(t *testing.T) {
-	svc1 := &MockService{name: "clear-svc", properties: testrig.Properties{"a": "1"}}
-	svc2 := &MockService{name: "clear-svc2", properties: testrig.Properties{"b": "2"}}
+func TestIntegration_FreshEnv_DoesNotInheritFromPriorEnv(t *testing.T) {
+	// Two independent Envs sharing a Service instance still publish properties
+	// independently — the second env's view contains exactly its own services,
+	// no leak from the first env's run.
+	svc1 := &MockService{name: "shared-svc", properties: testrig.Properties{"a": "1"}}
+	svc2 := &MockService{name: "second-only", properties: testrig.Properties{"b": "2"}}
 
 	first := testrig.MustNew(testrig.With(svc1))
 	if err := first.Start(context.Background()); err != nil {
@@ -345,7 +188,6 @@ func TestIntegration_RestartClearsOldProperties(t *testing.T) {
 	}
 	_ = first.Stop(context.Background())
 
-	// Build a fresh env that includes both services.
 	env := testrig.MustNew(testrig.With(svc1, svc2))
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Second Start failed: %v", err)
@@ -353,22 +195,22 @@ func TestIntegration_RestartClearsOldProperties(t *testing.T) {
 	defer func() { _ = env.Stop(context.Background()) }()
 
 	props := env.Properties()
-	if props["b"] != "2" {
-		t.Error("Expected property b from second run")
-	}
 	if props["a"] != "1" {
 		t.Error("Expected property a from svc1")
 	}
+	if props["b"] != "2" {
+		t.Error("Expected property b from svc2")
+	}
 }
 
-// --- OnStart Hook Failure Triggers Rollback ---
+// --- AfterStart Hook Failure Triggers Rollback ---
 
-func TestIntegration_OnStartHookFailure_RollsBackServices(t *testing.T) {
+func TestIntegration_AfterStartHookFailure_RollsBackServices(t *testing.T) {
 	var stopped bool
 	svc := &MockService{name: "hook-fail-svc", properties: testrig.Properties{"k": "v"}, onStop: func() { stopped = true }}
 
 	hook := &MockLifecycleHook{
-		onStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
 			return errors.New("hook-fail")
 		},
 	}
@@ -383,26 +225,6 @@ func TestIntegration_OnStartHookFailure_RollsBackServices(t *testing.T) {
 	}
 	if !stopped {
 		t.Error("Service should have been stopped (rollback) after hook failure")
-	}
-}
-
-// --- Discovery Error Causes Service Start Failure ---
-
-func TestIntegration_DiscoverError_FailsStart(t *testing.T) {
-	s1 := &MockService{name: "disc-err-svc", properties: testrig.Properties{"k": "v"}}
-
-	dp := &mockDiscoveryProvider{
-		discoverErr: errors.New("discover-fail"),
-		inner:       testrig.NewDiscovery(testrig.NewMapStore()),
-	}
-
-	env := testrig.MustNew(testrig.WithDiscovery(dp), testrig.With(s1))
-	err := env.Start(context.Background())
-	if err == nil {
-		t.Fatal("Expected error from discovery failure")
-	}
-	if !strings.Contains(err.Error(), "discover-fail") {
-		t.Errorf("Expected discover-fail in error, got %v", err)
 	}
 }
 
@@ -428,7 +250,6 @@ func TestIntegration_WithName_AppearsInError(t *testing.T) {
 	svc := &MockService{name: "svc1"}
 	env := testrig.MustNew(testrig.WithName("named-env"), testrig.With(svc))
 
-	// Start the env, then try to start again — error should contain the name
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("First Start failed: %v", err)
 	}
