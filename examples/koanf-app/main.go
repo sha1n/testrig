@@ -1,48 +1,60 @@
 // Package main is a runnable end-to-end demo of integrating testrig with a
 // koanf-based application.
 //
-// The app: a tiny HTTP service that reads APP_PORT and DATABASE_URL via
-// koanf and serves /health. The config-loading code is the kind a production
-// service would have — no testrig awareness.
+// The app: a tiny HTTP service that
+//  1. reads its config (DB DSN, remote service URL, listen port) via koanf,
+//  2. exposes POST /save?key=<k> which fires a background lookup against the
+//     configured remote service and persists the response body into Postgres
+//     under the given key, and
+//  3. exposes GET /lookup?key=<k> for inspection.
 //
-// The integration: setupEnv builds a testrig.Env that brings up a real
-// Postgres container, then layers env.Properties() onto koanf via the
-// confmap provider (which sits above env vars in precedence). Both main and
-// main_test use the same setupEnv so the demo and the test exercise the same
-// code path.
+// The integration: setupEnv builds a testrig.Env that brings up real Postgres
+// and WireMock containers, layers env.Properties() onto koanf via the
+// confmap provider, runs the schema migration, and returns the wired-up
+// pieces. Both main and the test use setupEnv.
 //
 // Run:
 //
 //	go run ./examples/koanf-app/
 //
-// Then `curl http://localhost:9090/health` returns the live container DSN.
+// (The remote /lookup target won't have stubs, so /save will record an
+// "unmatched" response from WireMock. The test sets up real stubs.)
+//
 // Requires Docker (testcontainers).
 package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/v2"
 	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/services/postgres"
+	"github.com/sha1n/testrig/services/wiremock"
 )
 
-// Config is the application's typed config. Production code reads it the same
+// Config is the typed application config. Production code reads it the same
 // way demo code does — koanf handles the source.
 type Config struct {
 	AppPort     int    `koanf:"app_port"`
 	DatabaseURL string `koanf:"database_url"`
+	RemoteURL   string `koanf:"remote_url"`
 }
 
-// loadConfig builds a Config using koanf. Environment variables are loaded
-// first; overrides layer on top via confmap.Provider so they win.
-// Production code passes nil; the testrig integration passes env.Properties().
+// loadConfig builds a Config using koanf. Environment variables load first;
+// overrides layer on top via confmap.Provider so they win. Production code
+// passes nil; the testrig integration passes env.Properties().
 func loadConfig(overrides map[string]string) (*Config, error) {
 	k := koanf.New(".")
 
@@ -66,70 +78,195 @@ func loadConfig(overrides map[string]string) (*Config, error) {
 	if err := k.Unmarshal("", &cfg); err != nil {
 		return nil, fmt.Errorf("error unmarshaling: %w", err)
 	}
-
 	if cfg.AppPort == 0 {
 		return nil, fmt.Errorf("APP_PORT is required")
 	}
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
+	if cfg.RemoteURL == "" {
+		return nil, fmt.Errorf("REMOTE_URL is required")
+	}
 	return &cfg, nil
 }
 
-func newHandler(cfg *Config) http.Handler {
+// schemaDDL is the table the demo app stores remote-lookup responses in.
+// Applied on startup via migrate.
+const schemaDDL = `
+CREATE TABLE IF NOT EXISTS responses (
+    key        TEXT PRIMARY KEY,
+    response   TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`
+
+func migrate(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, schemaDDL); err != nil {
+		return fmt.Errorf("schema migration: %w", err)
+	}
+	return nil
+}
+
+// fetchAndStore looks up `key` against the remote service and persists the
+// response body into the DB under that key. Used as the async worker behind
+// POST /save.
+func fetchAndStore(ctx context.Context, remoteURL string, db *sql.DB, key string) error {
+	target := remoteURL + "/lookup?key=" + url.QueryEscape(key)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("remote GET %s: %w", target, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read remote body: %w", err)
+	}
+	_, err = db.ExecContext(ctx, `
+        INSERT INTO responses (key, response) VALUES ($1, $2)
+        ON CONFLICT (key) DO UPDATE SET response = EXCLUDED.response, created_at = now()
+    `, key, string(body))
+	if err != nil {
+		return fmt.Errorf("insert response for key=%s: %w", key, err)
+	}
+	return nil
+}
+
+// newHandler builds the HTTP handler for the demo app.
+//   - POST /save?key=<k> queues an async fetchAndStore and returns 202.
+//   - GET  /lookup?key=<k> returns the stored response (404 if missing).
+func newHandler(cfg *Config, db *sql.DB) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK - " + cfg.DatabaseURL))
+
+	mux.HandleFunc("POST /save", func(w http.ResponseWriter, r *http.Request) {
+		key := r.URL.Query().Get("key")
+		if key == "" {
+			http.Error(w, "missing key", http.StatusBadRequest)
+			return
+		}
+		go func() {
+			if err := fetchAndStore(context.Background(), cfg.RemoteURL, db, key); err != nil {
+				log.Printf("fetchAndStore key=%s: %v", key, err)
+			}
+		}()
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	mux.HandleFunc("GET /lookup", func(w http.ResponseWriter, r *http.Request) {
+		key := r.URL.Query().Get("key")
+		if key == "" {
+			http.Error(w, "missing key", http.StatusBadRequest)
+			return
+		}
+		var body string
+		err := db.QueryRowContext(r.Context(), `SELECT response FROM responses WHERE key = $1`, key).Scan(&body)
+		switch {
+		case err == sql.ErrNoRows:
+			http.NotFound(w, r)
+		case err != nil:
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		}
 	})
 	return mux
 }
 
-// setupEnv wires testrig + koanf together: brings up a Postgres service whose
-// DSN is published directly under DATABASE_URL (the application's config key),
-// adds the application-only APP_PORT key, and feeds the merged map into koanf
-// to produce a Config. Returns the Config and a cleanup function that stops
-// the env.
-//
-// Publishing under a flat key like DATABASE_URL (rather than the service's
-// default "pg.dsn") matters extra here because koanf treats "." as a delimiter
-// — a default key would create a nested map rather than a flat config key.
-//
-// This is the heart of the integration — both main and the test below call it.
-func setupEnv(ctx context.Context) (*Config, func(), error) {
-	env := testrig.MustNew(testrig.With(
-		postgres.New("pg").
-			WithDatabase("koanf_db").
-			WithDSNPropertyName("DATABASE_URL"),
-	))
-	if err := env.Start(ctx); err != nil {
+// Setup is the result of setupEnv: the resolved config, an open DB handle,
+// the wired-up HTTP handler, and the WireMock service handle (so tests can
+// install stubs against the remote). Cleanup tears down DB + env.
+type Setup struct {
+	Cfg      *Config
+	DB       *sql.DB
+	Handler  http.Handler
+	WireMock *wiremock.WireMock
+}
+
+// setupEnv brings up Postgres + WireMock via testrig, builds the application
+// Config from env.Properties(), runs the schema migration, and returns the
+// wired-up Setup. This is the single integration surface — main and the
+// test below both call it.
+func setupEnv(ctx context.Context) (*Setup, func(), error) {
+	pg := postgres.New("pg").
+		WithDatabase("koanf_app").
+		WithDSNPropertyName("DATABASE_URL")
+	wm := wiremock.New("wm").
+		WithURLPropertyName("REMOTE_URL")
+
+	envInst := testrig.MustNew(testrig.With(pg, wm))
+	if err := envInst.Start(ctx); err != nil {
 		return nil, nil, fmt.Errorf("env.Start: %w", err)
 	}
 
-	overrides := env.Properties()
-	overrides["APP_PORT"] = "9090"
+	cleanup := func() { _ = envInst.Stop(context.Background()) }
+
+	port, err := freePort()
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("freePort: %w", err)
+	}
+	overrides := envInst.Properties()
+	overrides["APP_PORT"] = strconv.Itoa(port)
 
 	cfg, err := loadConfig(overrides)
 	if err != nil {
-		_ = env.Stop(ctx)
+		cleanup()
 		return nil, nil, fmt.Errorf("loadConfig: %w", err)
 	}
 
-	cleanup := func() { _ = env.Stop(context.Background()) }
-	return cfg, cleanup, nil
+	db, err := pg.DB(ctx)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("pg.DB: %w", err)
+	}
+	if err := migrate(ctx, db); err != nil {
+		_ = db.Close()
+		cleanup()
+		return nil, nil, fmt.Errorf("migrate: %w", err)
+	}
+
+	fullCleanup := func() {
+		_ = db.Close()
+		cleanup()
+	}
+
+	return &Setup{
+		Cfg:      cfg,
+		DB:       db,
+		Handler:  newHandler(cfg, db),
+		WireMock: wm,
+	}, fullCleanup, nil
+}
+
+// freePort asks the OS for an unused TCP port and returns the number after
+// releasing it. There is a small TOCTOU window between Close and the caller
+// rebinding the port, but that is acceptable for the demo and irrelevant for
+// the test (which uses httptest.NewServer with its own auto-assigned port).
+func freePort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		return 0, err
+	}
+	return port, nil
 }
 
 func main() {
 	ctx := context.Background()
-
-	cfg, cleanup, err := setupEnv(ctx)
+	s, cleanup, err := setupEnv(ctx)
 	if err != nil {
 		log.Fatalf("setup error: %v", err)
 	}
 	defer cleanup()
 
-	log.Printf("testrig env up; serving on :%d with DATABASE_URL=%s", cfg.AppPort, cfg.DatabaseURL)
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.AppPort), newHandler(cfg)); err != nil {
+	log.Printf("testrig env up; serving on :%d (DATABASE_URL=%s, REMOTE_URL=%s)", s.Cfg.AppPort, s.Cfg.DatabaseURL, s.Cfg.RemoteURL)
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", s.Cfg.AppPort), s.Handler); err != nil {
 		log.Fatal(err)
 	}
 }

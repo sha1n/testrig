@@ -7,60 +7,122 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wiremock/go-wiremock"
 )
 
-// TestSetupEnv exercises the same integration that main() runs: spin up a
-// testrig.Env containing a Postgres service, feed env.Properties() into Viper,
-// and confirm the resulting Config points at the live container.
+// TestSaveEndpoint_PersistsRemoteResponse is the end-to-end integration test:
+//
+//  1. setupEnv brings up Postgres + WireMock through testrig and wires the app.
+//  2. The test stubs WireMock's /lookup so a known response is returned.
+//  3. The test calls the app's POST /save?key=alpha endpoint. The handler
+//     enqueues an async fetchAndStore.
+//  4. The test polls the DB until a row with the expected body appears, with
+//     a timeout — modelling how a caller would observe asynchronous work
+//     completing.
 //
 // This is the canonical "test the integration" surface for the example.
-func TestSetupEnv(t *testing.T) {
-	cfg, cleanup, err := setupEnv(context.Background())
+func TestSaveEndpoint_PersistsRemoteResponse(t *testing.T) {
+	s, cleanup, err := setupEnv(context.Background())
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 
-	assert.Equal(t, 8080, cfg.AppPort)
-	assert.Contains(t, cfg.DatabaseURL, "viper_db")
-	assert.Contains(t, cfg.DatabaseURL, "postgres://")
-}
+	// Stub the remote: GET /lookup?key=alpha returns a deterministic body.
+	const expectedBody = `{"data":"alpha-value"}`
+	require.NoError(t, s.WireMock.Client().StubFor(
+		wiremock.Get(wiremock.URLPathEqualTo("/lookup")).
+			WithQueryParam("key", wiremock.EqualTo("alpha")).
+			WillReturnResponse(wiremock.NewResponse().
+				WithStatus(http.StatusOK).
+				WithHeaders(map[string]string{"Content-Type": "application/json"}).
+				WithBody(expectedBody)),
+	))
 
-// TestSetupEnv_HandlerEndToEnd goes one step further: takes the Config that
-// setupEnv produces, instantiates the actual handler the app would serve, and
-// hits /health to confirm the live DSN flows all the way through.
-func TestSetupEnv_HandlerEndToEnd(t *testing.T) {
-	cfg, cleanup, err := setupEnv(context.Background())
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
-
-	srv := httptest.NewServer(newHandler(cfg))
+	srv := httptest.NewServer(s.Handler)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/health")
+	// Trigger the async work.
+	resp, err := http.Post(srv.URL+"/save?key=alpha", "", nil)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	body, _ := io.ReadAll(resp.Body)
-	assert.Contains(t, string(body), "viper_db")
-	assert.Contains(t, string(body), "postgres://")
+	// Poll the DB until the row appears (or the timeout fires).
+	require.Eventually(t, func() bool {
+		var got string
+		err := s.DB.QueryRow(`SELECT response FROM responses WHERE key = $1`, "alpha").Scan(&got)
+		return err == nil && got == expectedBody
+	}, 5*time.Second, 50*time.Millisecond, "DB row for key=alpha did not contain expected body within timeout")
+
+	// Sanity: the app's own /lookup endpoint also returns the stored row.
+	got, err := http.Get(srv.URL + "/lookup?key=alpha")
+	require.NoError(t, err)
+	defer got.Body.Close()
+	body, _ := io.ReadAll(got.Body)
+	assert.Equal(t, http.StatusOK, got.StatusCode)
+	assert.Equal(t, expectedBody, string(body))
+}
+
+func TestSaveEndpoint_MissingKey_Returns400(t *testing.T) {
+	s, cleanup, err := setupEnv(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	srv := httptest.NewServer(s.Handler)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/save", "", nil)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestLookupEndpoint_UnknownKey_Returns404(t *testing.T) {
+	s, cleanup, err := setupEnv(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	srv := httptest.NewServer(s.Handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/lookup?key=nope")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 // --- loadConfig validation paths (no container) ---
 
 func TestLoadConfig_MissingAppPort(t *testing.T) {
-	_, err := loadConfig(map[string]string{"DATABASE_URL": "postgres://x"})
+	_, err := loadConfig(map[string]string{
+		"DATABASE_URL": "postgres://x",
+		"REMOTE_URL":   "http://x",
+	})
 	if err == nil || !strings.Contains(err.Error(), "APP_PORT") {
 		t.Errorf("expected APP_PORT error, got %v", err)
 	}
 }
 
 func TestLoadConfig_MissingDatabaseURL(t *testing.T) {
-	_, err := loadConfig(map[string]string{"APP_PORT": "8080"})
+	_, err := loadConfig(map[string]string{
+		"APP_PORT":   "8080",
+		"REMOTE_URL": "http://x",
+	})
 	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
 		t.Errorf("expected DATABASE_URL error, got %v", err)
+	}
+}
+
+func TestLoadConfig_MissingRemoteURL(t *testing.T) {
+	_, err := loadConfig(map[string]string{
+		"APP_PORT":     "8080",
+		"DATABASE_URL": "postgres://x",
+	})
+	if err == nil || !strings.Contains(err.Error(), "REMOTE_URL") {
+		t.Errorf("expected REMOTE_URL error, got %v", err)
 	}
 }
 
@@ -68,6 +130,7 @@ func TestLoadConfig_UnmarshalError(t *testing.T) {
 	_, err := loadConfig(map[string]string{
 		"APP_PORT":     "not-a-number",
 		"DATABASE_URL": "postgres://x",
+		"REMOTE_URL":   "http://x",
 	})
 	if err == nil {
 		t.Fatal("expected unmarshal error for non-numeric APP_PORT")
