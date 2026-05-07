@@ -221,50 +221,70 @@ func TestEnv_Start_Rollback_JoinsRollbackErrors(t *testing.T) {
 }
 
 func TestEnv_ParallelStartStop(t *testing.T) {
-	// All services start in parallel and stop in parallel — no dependency
-	// ordering. Three services with identical 50ms delays should all
-	// start within ~tens of ms of each other.
-	var mu sync.Mutex
-	startTimes := make(map[string]time.Time)
-	stopTimes := make(map[string]time.Time)
-
-	recordStart := func(name string) { mu.Lock(); startTimes[name] = time.Now(); mu.Unlock() }
-	recordStop := func(name string) { mu.Lock(); stopTimes[name] = time.Now(); mu.Unlock() }
+	// Verify all services in a track are inside Start (and inside Stop)
+	// concurrently. Each service signals on entering its hook, then
+	// blocks until every peer has also signaled. If parallelism works
+	// the signals all arrive near-instantly and the test releases them.
+	// If execution were serialized, the first hook would block on the
+	// barrier and later hooks would never enter, tripping the 10s
+	// deadline. This is robust to scheduler jitter — it asserts the
+	// concurrency invariant directly, not via wall-clock spread.
+	const n = 3
+	startEntered := make(chan string, n)
+	releaseStart := make(chan struct{})
+	stopEntered := make(chan string, n)
+	releaseStop := make(chan struct{})
 
 	mkSvc := func(name string) *MockService {
 		return &MockService{
-			name:       name,
-			startDelay: 50 * time.Millisecond,
-			stopDelay:  50 * time.Millisecond,
-			onStart:    func() { recordStart(name) },
-			onStop:     func() { recordStop(name) },
+			name: name,
+			onStart: func() {
+				startEntered <- name
+				<-releaseStart
+			},
+			onStop: func() {
+				stopEntered <- name
+				<-releaseStop
+			},
 		}
 	}
 
 	env := testrig.New("test").With(mkSvc("A"), mkSvc("B"), mkSvc("C"))
 
-	if err := env.Start(context.Background()); err != nil {
+	startErr := make(chan error, 1)
+	go func() { startErr <- env.Start(context.Background()) }()
+	awaitAll(t, "Start", n, startEntered)
+	close(releaseStart)
+	if err := <-startErr; err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	startSpread := startTimes["C"].Sub(startTimes["A"])
-	if startSpread < 0 {
-		startSpread = -startSpread
-	}
-	if startSpread > 40*time.Millisecond {
-		t.Errorf("services did not start in parallel: spread=%v", startSpread)
-	}
-
-	if err := env.Stop(context.Background()); err != nil {
+	stopErr := make(chan error, 1)
+	go func() { stopErr <- env.Stop(context.Background()) }()
+	awaitAll(t, "Stop", n, stopEntered)
+	close(releaseStop)
+	if err := <-stopErr; err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}
+}
 
-	stopSpread := stopTimes["C"].Sub(stopTimes["A"])
-	if stopSpread < 0 {
-		stopSpread = -stopSpread
-	}
-	if stopSpread > 40*time.Millisecond {
-		t.Errorf("services did not stop in parallel: spread=%v", stopSpread)
+// awaitAll blocks until n distinct names arrive on entered, or fails the
+// test if 10s elapses without all n arriving. Used by parallelism tests
+// to assert "all n hooks are inside their bodies at the same time."
+func awaitAll(t *testing.T, hookName string, n int, entered <-chan string) {
+	t.Helper()
+	seen := make(map[string]bool, n)
+	deadline := time.After(10 * time.Second)
+	for len(seen) < n {
+		select {
+		case name := <-entered:
+			if seen[name] {
+				t.Fatalf("%s: duplicate entry from %q", hookName, name)
+			}
+			seen[name] = true
+		case <-deadline:
+			t.Fatalf("%s: only %d/%d hooks entered within 10s — not running concurrently (saw: %v)", hookName, len(seen), n, seen)
+		}
 	}
 }
 
@@ -602,61 +622,91 @@ func TestEnv_NameSetByConstructor(t *testing.T) {
 }
 
 func TestEnv_WithStages_RunsStagesInOrder(t *testing.T) {
-	// Two-stage track: A starts first, then B and C start concurrently
-	// after A is up. Verify ordering by recording start timestamps.
-	var mu sync.Mutex
-	startTimes := make(map[string]time.Time)
-	recordStart := func(name string) { mu.Lock(); startTimes[name] = time.Now(); mu.Unlock() }
+	// Two-stage track: stage 1 = {A}, stage 2 = {B, C}.
+	//
+	// Ordering invariant (between stages): when B or C enter Start, A's
+	// Start has already completed. Verified via an atomic flag set when
+	// A returns.
+	//
+	// Parallelism invariant (within stage 2): B and C are inside Start
+	// concurrently. Verified via a barrier — both must signal before
+	// either is released. If stage 2 ran B and C sequentially, the
+	// first would block on the barrier and the second would never
+	// enter, tripping the 10s deadline.
+	var aDone atomic.Bool
+	stage2Entered := make(chan string, 2)
+	releaseStage2 := make(chan struct{})
 
-	mkSvc := func(name string) *MockService {
-		return &MockService{
-			name:       name,
-			startDelay: 50 * time.Millisecond,
-			onStart:    func() { recordStart(name) },
-		}
+	a := &MockService{
+		name:    "A",
+		onStart: func() { aDone.Store(true) },
 	}
-	a, b, c := mkSvc("A"), mkSvc("B"), mkSvc("C")
+	b := &MockService{
+		name: "B",
+		onStart: func() {
+			if !aDone.Load() {
+				t.Errorf("B entered Start before A's Start completed")
+			}
+			stage2Entered <- "B"
+			<-releaseStage2
+		},
+	}
+	c := &MockService{
+		name: "C",
+		onStart: func() {
+			if !aDone.Load() {
+				t.Errorf("C entered Start before A's Start completed")
+			}
+			stage2Entered <- "C"
+			<-releaseStage2
+		},
+	}
 
 	env := testrig.New("staged").WithStages(testrig.NewStages(a).Then(b, c))
-	if err := env.Start(context.Background()); err != nil {
+	startErr := make(chan error, 1)
+	go func() { startErr <- env.Start(context.Background()) }()
+
+	awaitAll(t, "stage 2 Start", 2, stage2Entered)
+	close(releaseStage2)
+
+	if err := <-startErr; err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
-
-	// A must finish starting before B and C start.
-	if !startTimes["A"].Before(startTimes["B"]) {
-		t.Errorf("A should start before B; A=%v B=%v", startTimes["A"], startTimes["B"])
-	}
-	if !startTimes["A"].Before(startTimes["C"]) {
-		t.Errorf("A should start before C; A=%v C=%v", startTimes["A"], startTimes["C"])
-	}
-
-	// B and C should start within ~tens of ms of each other (parallel
-	// within stage 2).
-	spread := startTimes["C"].Sub(startTimes["B"])
-	if spread < 0 {
-		spread = -spread
-	}
-	if spread > 40*time.Millisecond {
-		t.Errorf("B and C should start in parallel within stage 2; spread=%v", spread)
-	}
 }
 
 func TestEnv_WithStages_StopsInReverseStageOrder(t *testing.T) {
-	// Two-stage track: stage 1 = {A}, stage 2 = {B, C}. On Stop, stage 2
-	// must finish before stage 1.
-	var mu sync.Mutex
-	stopTimes := make(map[string]time.Time)
-	recordStop := func(name string) { mu.Lock(); stopTimes[name] = time.Now(); mu.Unlock() }
+	// Two-stage track: stage 1 = {A}, stage 2 = {B, C}. On Stop, every
+	// service in stage 2 must Stop before any service in stage 1 begins
+	// stopping. Asserted via an atomic flag set when A's Stop enters —
+	// B and C check the flag and fail if A has already begun stopping.
+	// No wall-clock involved; the assertion is on the ordering relation
+	// the framework guarantees.
+	var aStopEntered atomic.Bool
+	var bStopRan, cStopRan atomic.Bool
 
-	mkSvc := func(name string) *MockService {
-		return &MockService{
-			name:      name,
-			stopDelay: 50 * time.Millisecond,
-			onStop:    func() { recordStop(name) },
-		}
+	a := &MockService{
+		name:    "A",
+		onStop:  func() { aStopEntered.Store(true) },
 	}
-	a, b, c := mkSvc("A"), mkSvc("B"), mkSvc("C")
+	b := &MockService{
+		name: "B",
+		onStop: func() {
+			if aStopEntered.Load() {
+				t.Errorf("B's Stop ran after A's Stop entered (wrong reverse-stage order)")
+			}
+			bStopRan.Store(true)
+		},
+	}
+	c := &MockService{
+		name: "C",
+		onStop: func() {
+			if aStopEntered.Load() {
+				t.Errorf("C's Stop ran after A's Stop entered (wrong reverse-stage order)")
+			}
+			cStopRan.Store(true)
+		},
+	}
 
 	env := testrig.New("staged-stop").WithStages(testrig.NewStages(a).Then(b, c))
 	if err := env.Start(context.Background()); err != nil {
@@ -666,12 +716,14 @@ func TestEnv_WithStages_StopsInReverseStageOrder(t *testing.T) {
 		t.Fatalf("Stop failed: %v", err)
 	}
 
-	// A's Stop runs after B's and C's Stops.
-	if !stopTimes["A"].After(stopTimes["B"]) {
-		t.Errorf("A should stop after B; A=%v B=%v", stopTimes["A"], stopTimes["B"])
+	if !bStopRan.Load() {
+		t.Error("B's Stop did not run")
 	}
-	if !stopTimes["A"].After(stopTimes["C"]) {
-		t.Errorf("A should stop after C; A=%v C=%v", stopTimes["A"], stopTimes["C"])
+	if !cStopRan.Load() {
+		t.Error("C's Stop did not run")
+	}
+	if !aStopEntered.Load() {
+		t.Error("A's Stop did not run")
 	}
 }
 
@@ -685,35 +737,37 @@ func TestEnv_WithStages_NilPanics(t *testing.T) {
 }
 
 func TestEnv_TracksRunInParallel(t *testing.T) {
-	// Two independent tracks (each single-stage, single service) must
-	// start concurrently — same wall-clock parallelism as if both were
-	// in one With call.
-	var mu sync.Mutex
-	startTimes := make(map[string]time.Time)
-	recordStart := func(name string) { mu.Lock(); startTimes[name] = time.Now(); mu.Unlock() }
+	// Two single-stage tracks registered via separate With calls must
+	// run concurrently. Same barrier pattern as TestEnv_ParallelStartStop
+	// but exercising a different code path through Start's outer
+	// errgroup (one goroutine per track instead of one goroutine per
+	// service in a single stage).
+	const n = 2
+	entered := make(chan string, n)
+	release := make(chan struct{})
 
 	mkSvc := func(name string) *MockService {
 		return &MockService{
-			name:       name,
-			startDelay: 50 * time.Millisecond,
-			onStart:    func() { recordStart(name) },
+			name: name,
+			onStart: func() {
+				entered <- name
+				<-release
+			},
 		}
 	}
 	a, b := mkSvc("A"), mkSvc("B")
 
 	env := testrig.New("two-tracks").With(a).With(b)
-	if err := env.Start(context.Background()); err != nil {
+	startErr := make(chan error, 1)
+	go func() { startErr <- env.Start(context.Background()) }()
+
+	awaitAll(t, "two-tracks Start", n, entered)
+	close(release)
+
+	if err := <-startErr; err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
-
-	spread := startTimes["B"].Sub(startTimes["A"])
-	if spread < 0 {
-		spread = -spread
-	}
-	if spread > 40*time.Millisecond {
-		t.Errorf("two tracks did not start in parallel; spread=%v", spread)
-	}
 }
 
 // asString flattens any panic value to its string form.

@@ -10,7 +10,6 @@ package seed
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 
@@ -51,7 +50,7 @@ func (s *SchemaSeed) Start(ctx context.Context, logger *slog.Logger) (testrig.Pr
 	}
 	defer func() { _ = db.Close() }()
 
-	if err := apply(ctx, db, schemaDDL); err != nil {
+	if _, err := db.ExecContext(ctx, schemaDDL); err != nil {
 		return nil, fmt.Errorf("seed: apply schema: %w", err)
 	}
 	return testrig.Properties{"seed.applied": "true"}, nil
@@ -59,9 +58,3 @@ func (s *SchemaSeed) Start(ctx context.Context, logger *slog.Logger) (testrig.Pr
 
 // Stop is a no-op: the schema dies with its container.
 func (s *SchemaSeed) Stop(ctx context.Context) error { return nil }
-
-// apply executes a single SQL statement.
-func apply(ctx context.Context, db *sql.DB, stmt string) error {
-	_, err := db.ExecContext(ctx, stmt)
-	return err
-}

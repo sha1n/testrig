@@ -191,15 +191,10 @@ func (e *Env) runTrack(ctx context.Context, trackIdx int, track *Stages) error {
 	return nil
 }
 
-// recordStarted appends svc to e.started[trackIdx][stageIdx], growing the
-// outer/inner slices on demand. Caller must hold e.mu.
+// recordStarted appends svc to e.started[trackIdx][stageIdx]. The outer
+// and middle dimensions are pre-allocated in beginStart to match the
+// shape of e.tracks. Caller must hold e.mu.
 func (e *Env) recordStarted(trackIdx, stageIdx int, svc Service) {
-	for len(e.started) <= trackIdx {
-		e.started = append(e.started, nil)
-	}
-	for len(e.started[trackIdx]) <= stageIdx {
-		e.started[trackIdx] = append(e.started[trackIdx], nil)
-	}
 	e.started[trackIdx][stageIdx] = append(e.started[trackIdx][stageIdx], svc)
 }
 
@@ -218,7 +213,10 @@ func (e *Env) beginStart() error {
 		return err
 	}
 	e.properties = make(Properties)
-	e.started = nil
+	e.started = make([][][]Service, len(e.tracks))
+	for i, t := range e.tracks {
+		e.started[i] = make([][]Service, len(t.stages))
+	}
 	e.state = stateStarting
 	return nil
 }

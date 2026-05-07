@@ -7,7 +7,18 @@ import (
 	"github.com/sha1n/testrig/examples/koanf-app/config"
 )
 
+// clearEnv neutralizes the three config keys so the test is deterministic
+// even on a host that has them set in its environment. t.Setenv reverts
+// on test cleanup.
+func clearEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("APP_PORT", "")
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("REMOTE_URL", "")
+}
+
 func TestLoad_MissingAppPort(t *testing.T) {
+	clearEnv(t)
 	_, err := config.Load(map[string]string{
 		"DATABASE_URL": "postgres://x",
 		"REMOTE_URL":   "http://x",
@@ -18,6 +29,7 @@ func TestLoad_MissingAppPort(t *testing.T) {
 }
 
 func TestLoad_MissingDatabaseURL(t *testing.T) {
+	clearEnv(t)
 	_, err := config.Load(map[string]string{
 		"APP_PORT":   "8080",
 		"REMOTE_URL": "http://x",
@@ -28,6 +40,7 @@ func TestLoad_MissingDatabaseURL(t *testing.T) {
 }
 
 func TestLoad_MissingRemoteURL(t *testing.T) {
+	clearEnv(t)
 	_, err := config.Load(map[string]string{
 		"APP_PORT":     "8080",
 		"DATABASE_URL": "postgres://x",
@@ -38,6 +51,7 @@ func TestLoad_MissingRemoteURL(t *testing.T) {
 }
 
 func TestLoad_UnmarshalError(t *testing.T) {
+	clearEnv(t)
 	_, err := config.Load(map[string]string{
 		"APP_PORT":     "not-a-number",
 		"DATABASE_URL": "postgres://x",
@@ -49,6 +63,7 @@ func TestLoad_UnmarshalError(t *testing.T) {
 }
 
 func TestLoad_AllValid(t *testing.T) {
+	clearEnv(t)
 	cfg, err := config.Load(map[string]string{
 		"APP_PORT":     "8080",
 		"DATABASE_URL": "postgres://localhost/x",

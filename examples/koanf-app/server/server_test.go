@@ -94,11 +94,14 @@ func TestSaveEndpoint_PersistsRemoteResponse(t *testing.T) {
 	_ = resp.Body.Close()
 	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 
+	// Long timeout, very frequent polling: happy path returns in tens of
+	// ms; the 10s ceiling only fires on a real failure, so the test
+	// can't flake on a loaded CI runner.
 	require.Eventually(t, func() bool {
 		var got string
 		err := db.QueryRow(`SELECT response FROM responses WHERE key = $1`, key).Scan(&got)
 		return err == nil && got == expectedBody
-	}, 5*time.Second, 50*time.Millisecond, "DB row for key=%q did not appear in time", key)
+	}, 10*time.Second, 10*time.Millisecond, "DB row for key=%q did not appear in time", key)
 
 	got, err := http.Get(srv.URL + "/lookup?key=" + key)
 	require.NoError(t, err)
