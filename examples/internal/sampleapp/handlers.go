@@ -3,6 +3,7 @@ package sampleapp
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -37,7 +38,7 @@ func (s *Server) handleLookup(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := s.lookup(r.Context(), key)
 	switch {
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 		http.NotFound(w, r)
 	case err != nil:
 		http.Error(w, err.Error(), http.StatusInternalServerError)
