@@ -6,15 +6,20 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/sha1n/testrig"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/wiremock/go-wiremock"
-	wiremock_tc "github.com/wiremock/wiremock-testcontainers-go"
 )
 
 const (
 	defaultImage = "wiremock/wiremock"
 	defaultTag   = "3.2.0"
+
+	// containerPort is the port WireMock listens on inside the container.
+	containerPort = "8080"
 )
 
 // WireMock is a pre-configured WireMock test harness. It implements
@@ -39,7 +44,7 @@ type WireMock struct {
 
 	// Runtime state, populated during Start and cleared by Stop.
 	// container != nil is the canonical "currently running" check.
-	container *wiremock_tc.WireMockContainer
+	container testcontainers.Container
 	url       string
 }
 
@@ -82,7 +87,15 @@ func (t *WireMock) Start(ctx context.Context, envCtx testrig.EnvContext) (testri
 	t.logger = envCtx.Logger()
 	t.logger.Info("🎬 Starting WireMock service", "name", t.name)
 
-	container, err := wiremock_tc.RunContainer(ctx, wiremock_tc.WithImage(fmt.Sprintf("%s:%s", t.image, t.tag)))
+	container, err := testcontainers.Run(ctx,
+		fmt.Sprintf("%s:%s", t.image, t.tag),
+		testcontainers.WithExposedPorts(containerPort+"/tcp"),
+		testcontainers.WithWaitStrategy(
+			wait.ForHTTP("/__admin").
+				WithPort(containerPort+"/tcp").
+				WithStartupTimeout(60*time.Second),
+		),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start wiremock container: %w", err)
 	}
@@ -92,7 +105,7 @@ func (t *WireMock) Start(ctx context.Context, envCtx testrig.EnvContext) (testri
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wiremock host: %w", err)
 	}
-	port, err := container.MappedPort(ctx, "8080")
+	port, err := container.MappedPort(ctx, containerPort+"/tcp")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wiremock mapped port: %w", err)
 	}
