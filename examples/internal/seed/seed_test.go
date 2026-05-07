@@ -36,7 +36,7 @@ func TestSchemaSeed_AppliesSchema(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM responses`).Scan(&count); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM responses`).Scan(&count); err != nil {
 		t.Fatalf("query responses: %v", err)
 	}
 	if count != 0 {
