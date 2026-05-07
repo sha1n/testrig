@@ -87,13 +87,16 @@ Two parallel example apps demonstrating testrig with different config
 libraries. Each is a small, well-structured Go server with:
 
 - `main.go` — thin entry point
-- `config/` — typed config loader
-- `server/` — HTTP server (routes, handlers, DB store) with integration
-  tests that share one test environment via `TestMain`
+- `config/` — typed config loader (Viper or koanf — the only divergent piece)
 - `testenv/` — testrig wiring used by both `main` and the tests
-- `seed/` — a **custom non-dockerized testrig.Service** that applies
-  schema DDL after Postgres is up; demonstrates how to write your own
-  `testrig.Service` and order it after a dependency via `WithStages`
+- `server/server_test.go` — integration tests sharing one env via `TestMain`
+
+The HTTP server itself and the custom schema-seed `testrig.Service` are
+shared between the two examples in `examples/internal/sampleapp` and
+`examples/internal/seed` — they have no config-library opinion. The seed
+package is the canonical demo of how to write your own
+**non-dockerized `testrig.Service`** and order it after a dependency via
+`WithStages`.
 
 | Example | Config library |
 |---|---|

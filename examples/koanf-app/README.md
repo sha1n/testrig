@@ -6,12 +6,15 @@ for typed configuration.
 ## Layout
 
 ```
-main.go              — entry point: testenv.Setup → config.Load → server.New → ListenAndServe
+main.go              — entry point: testenv.Setup → config.Load → sampleapp.New → ListenAndServe
 config/              — Config struct + Load (koanf-specific)
-server/              — HTTP server: routes, handlers, DB store; integration tests share env via TestMain
 testenv/             — testrig wiring used by both main and tests
-seed/                — custom non-dockerized testrig.Service that applies the schema after Postgres is up
+server/              — server_test.go: integration tests; share env via TestMain
 ```
+
+The HTTP server (handlers, store, routes) is in
+`examples/internal/sampleapp`; the custom schema-seed `testrig.Service`
+is in `examples/internal/seed` — both shared with `examples/viper-app`.
 
 ## Run
 
