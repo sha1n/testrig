@@ -50,7 +50,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	srv := server.New(cfg, db)
 	log.Printf("listening on :%d (DATABASE_URL=%s, REMOTE_URL=%s)",

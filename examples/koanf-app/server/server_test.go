@@ -105,7 +105,7 @@ func TestSaveEndpoint_PersistsRemoteResponse(t *testing.T) {
 
 	got, err := http.Get(srv.URL + "/lookup?key=" + key)
 	require.NoError(t, err)
-	defer got.Body.Close()
+	defer func() { _ = got.Body.Close() }()
 	body, _ := io.ReadAll(got.Body)
 	assert.Equal(t, http.StatusOK, got.StatusCode)
 	assert.Equal(t, expectedBody, string(body))

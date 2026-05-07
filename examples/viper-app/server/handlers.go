@@ -60,7 +60,7 @@ func (s *Server) fetchAndStore(ctx context.Context, key string) error {
 	if err != nil {
 		return fmt.Errorf("remote GET %s: %w", target, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read remote body: %w", err)

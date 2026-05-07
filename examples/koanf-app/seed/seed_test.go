@@ -33,7 +33,7 @@ func TestSchemaSeed_AppliesSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM responses`).Scan(&count); err != nil {

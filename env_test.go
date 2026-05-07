@@ -686,8 +686,8 @@ func TestEnv_WithStages_StopsInReverseStageOrder(t *testing.T) {
 	var bStopRan, cStopRan atomic.Bool
 
 	a := &MockService{
-		name:    "A",
-		onStop:  func() { aStopEntered.Store(true) },
+		name:   "A",
+		onStop: func() { aStopEntered.Store(true) },
 	}
 	b := &MockService{
 		name: "B",
