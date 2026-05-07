@@ -18,19 +18,18 @@ import (
 
 type MockService struct {
 	name       string
-	deps       []string
 	startErr   error
 	stopErr    error
 	startDelay time.Duration
+	stopDelay  time.Duration
 	properties testrig.Properties
 	onStart    func()
 	onStop     func()
 }
 
-func (m *MockService) Name() string           { return m.name }
-func (m *MockService) Dependencies() []string { return m.deps }
+func (m *MockService) Name() string { return m.name }
 
-func (m *MockService) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
+func (m *MockService) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
 	if m.startDelay > 0 {
 		select {
 		case <-time.After(m.startDelay):
@@ -48,6 +47,13 @@ func (m *MockService) Start(ctx context.Context, envCtx testrig.EnvContext) (tes
 }
 
 func (m *MockService) Stop(ctx context.Context) error {
+	if m.stopDelay > 0 {
+		select {
+		case <-time.After(m.stopDelay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if m.onStop != nil {
 		m.onStop()
 	}
@@ -55,20 +61,20 @@ func (m *MockService) Stop(ctx context.Context) error {
 }
 
 type MockLifecycleHook struct {
-	afterStart func(ctx context.Context, envCtx testrig.EnvContext) error
-	afterStop  func(ctx context.Context, envCtx testrig.EnvContext) error
+	afterStart func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error
+	afterStop  func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error
 }
 
-func (m *MockLifecycleHook) AfterStart(ctx context.Context, envCtx testrig.EnvContext) error {
+func (m *MockLifecycleHook) AfterStart(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
 	if m.afterStart != nil {
-		return m.afterStart(ctx, envCtx)
+		return m.afterStart(ctx, props, logger)
 	}
 	return nil
 }
 
-func (m *MockLifecycleHook) AfterStop(ctx context.Context, envCtx testrig.EnvContext) error {
+func (m *MockLifecycleHook) AfterStop(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
 	if m.afterStop != nil {
-		return m.afterStop(ctx, envCtx)
+		return m.afterStop(ctx, props, logger)
 	}
 	return nil
 }
@@ -77,9 +83,9 @@ func (m *MockLifecycleHook) AfterStop(ctx context.Context, envCtx testrig.EnvCon
 
 func TestEnv_Start_Success(t *testing.T) {
 	s1 := &MockService{name: "svc1", properties: testrig.Properties{"k1": "v1"}}
-	s2 := &MockService{name: "svc2", deps: []string{"svc1"}, properties: testrig.Properties{"k2": "v2"}}
+	s2 := &MockService{name: "svc2", properties: testrig.Properties{"k2": "v2"}}
 
-	env := testrig.MustNew(testrig.With(s1, s2))
+	env := testrig.New("test").With(s1, s2)
 
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -92,39 +98,10 @@ func TestEnv_Start_Success(t *testing.T) {
 	}
 }
 
-func TestEnv_Start_MissingDependency(t *testing.T) {
-	s1 := &MockService{name: "svc1", deps: []string{"missing-svc"}}
-
-	env := testrig.MustNew(testrig.With(s1))
-
-	err := env.Start(context.Background())
-	if err == nil {
-		t.Fatal("Expected error due to missing dependency, got nil")
-	}
-	if !strings.Contains(err.Error(), "depends on unknown service missing-svc") {
-		t.Errorf("Expected 'depends on unknown service missing-svc', got %v", err)
-	}
-}
-
-func TestEnv_Start_CircularDependency(t *testing.T) {
-	s1 := &MockService{name: "svc1", deps: []string{"svc2"}}
-	s2 := &MockService{name: "svc2", deps: []string{"svc1"}}
-
-	env := testrig.MustNew(testrig.With(s1, s2))
-
-	err := env.Start(context.Background())
-	if err == nil {
-		t.Fatal("Expected error due to circular dependency, got nil")
-	}
-	if !strings.Contains(err.Error(), "circular dependency detected") {
-		t.Errorf("Expected circular-dependency error, got %v", err)
-	}
-}
-
 func TestEnv_Start_ServiceError(t *testing.T) {
 	s1 := &MockService{name: "svc1", startErr: errors.New("boom")}
 
-	env := testrig.MustNew(testrig.With(s1))
+	env := testrig.New("test").With(s1)
 
 	err := env.Start(context.Background())
 	if err == nil {
@@ -139,7 +116,7 @@ func TestEnv_Start_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s1 := &MockService{name: "svc-slow", startDelay: 100 * time.Millisecond}
 
-	env := testrig.MustNew(testrig.With(s1))
+	env := testrig.New("test").With(s1)
 	cancel()
 
 	err := env.Start(ctx)
@@ -151,26 +128,9 @@ func TestEnv_Start_ContextCancellation(t *testing.T) {
 	}
 }
 
-func TestEnv_Start_ContextCancellation_WaitingForDependency(t *testing.T) {
-	s1 := &MockService{name: "svc1", startDelay: 1 * time.Second}
-	s2 := &MockService{name: "svc2", deps: []string{"svc1"}}
-
-	env := testrig.MustNew(testrig.With(s1, s2))
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	err := env.Start(ctx)
-	if err == nil {
-		t.Fatal("Expected error, got nil")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
-		t.Errorf("Expected context deadline exceeded, got %v", err)
-	}
-}
-
 func TestEnv_StateTransitions(t *testing.T) {
 	s1 := &MockService{name: "svc-state"}
-	env := testrig.MustNew(testrig.With(s1))
+	env := testrig.New("test").With(s1)
 
 	// 1. Double Start
 	if err := env.Start(context.Background()); err != nil {
@@ -200,7 +160,7 @@ func TestEnv_StateTransitions(t *testing.T) {
 func TestEnv_Stop_ServiceError(t *testing.T) {
 	s1 := &MockService{name: "svc-stop-err", stopErr: errors.New("stop-fail")}
 
-	env := testrig.MustNew(testrig.With(s1))
+	env := testrig.New("test").With(s1)
 
 	_ = env.Start(context.Background())
 	err := env.Stop(context.Background())
@@ -214,60 +174,10 @@ func TestEnv_Stop_ServiceError(t *testing.T) {
 
 func TestEnv_WithLogger(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	env := testrig.MustNew(testrig.WithLogger(logger))
+	env := testrig.New("test").WithLogger(logger)
 	if env.Properties() == nil {
 		t.Error("Properties should not be nil")
 	}
-}
-
-func TestEnv_Start_UnknownDependency_RejectsBeforeAnyServiceStarts(t *testing.T) {
-	var validStarted bool
-	valid := &MockService{name: "valid", onStart: func() { validStarted = true }}
-	bad := &MockService{name: "bad", deps: []string{"missing"}}
-
-	env := testrig.MustNew(testrig.With(valid, bad))
-	if err := env.Start(context.Background()); err == nil {
-		t.Fatal("Expected error due to unknown dependency, got nil")
-	}
-	if validStarted {
-		t.Error("valid service should NOT have started; configuration is invalid")
-	}
-}
-
-type ContextConsumerService struct {
-	MockService
-	t *testing.T
-}
-
-func (s *ContextConsumerService) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
-	val, ok := envCtx.Get("foo")
-	if !ok || val != "bar" {
-		s.t.Errorf("Expected foo=bar, got %s (ok=%v)", val, ok)
-	}
-	props := envCtx.Properties()
-	if props["foo"] != "bar" {
-		s.t.Errorf("Properties() map missing foo=bar: %v", props)
-	}
-	return nil, nil
-}
-
-func TestEnv_ContextAccess(t *testing.T) {
-	producer := &MockService{
-		name:       "producer",
-		properties: testrig.Properties{"foo": "bar"},
-	}
-	consumer := &ContextConsumerService{
-		MockService: MockService{name: "consumer", deps: []string{"producer"}},
-		t:           t,
-	}
-	env := testrig.MustNew(testrig.With(producer, consumer))
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	if env.Name() != "testenv" {
-		t.Errorf("Unexpected env name: %s", env.Name())
-	}
-	_ = env.Stop(context.Background())
 }
 
 func TestEnv_Start_Rollback(t *testing.T) {
@@ -277,7 +187,7 @@ func TestEnv_Start_Rollback(t *testing.T) {
 	s1 := &MockService{name: "svc1", onStop: func() { stopped1 = true }}
 	s2 := &MockService{name: "svc2", startErr: errors.New("boom"), onStop: func() { stopped2 = true }}
 
-	env := testrig.MustNew(testrig.With(s1, s2))
+	env := testrig.New("test").With(s1, s2)
 
 	err := env.Start(context.Background())
 	if err == nil {
@@ -291,49 +201,13 @@ func TestEnv_Start_Rollback(t *testing.T) {
 	}
 }
 
-func TestEnv_Start_DependencyFailure_DependentSkipped(t *testing.T) {
-	// A fails to start; B depends on A. B's Start must never be called (dep
-	// not ready) and B's Stop must never be called (never started).
-	var aStarted, bStarted, aStopped, bStopped bool
-	a := &MockService{
-		name:     "A",
-		startErr: errors.New("a-fail"),
-		onStart:  func() { aStarted = true },
-		onStop:   func() { aStopped = true },
-	}
-	b := &MockService{
-		name:    "B",
-		deps:    []string{"A"},
-		onStart: func() { bStarted = true },
-		onStop:  func() { bStopped = true },
-	}
-
-	env := testrig.MustNew(testrig.With(a, b))
-	if err := env.Start(context.Background()); err == nil {
-		t.Fatal("expected error from A's failure")
-	}
-
-	if !aStarted {
-		t.Error("A's Start should have been invoked")
-	}
-	if bStarted {
-		t.Error("B's Start should NOT have been invoked (dependency A failed)")
-	}
-	if aStopped {
-		t.Error("A's Stop should NOT have been called (its Start failed)")
-	}
-	if bStopped {
-		t.Error("B's Stop should NOT have been called (it never started)")
-	}
-}
-
 func TestEnv_Start_Rollback_JoinsRollbackErrors(t *testing.T) {
 	startErr := errors.New("boom")
 	stopErr := errors.New("rollback-fail")
 	s1 := &MockService{name: "s1", stopErr: stopErr}
 	s2 := &MockService{name: "s2", startErr: startErr}
 
-	env := testrig.MustNew(testrig.With(s1, s2))
+	env := testrig.New("test").With(s1, s2)
 	err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error, got nil")
@@ -347,9 +221,9 @@ func TestEnv_Start_Rollback_JoinsRollbackErrors(t *testing.T) {
 }
 
 func TestEnv_ParallelStartStop(t *testing.T) {
-	// A -> B
-	// C -> B
-	// All should start/stop in parallel where possible.
+	// All services start in parallel and stop in parallel — no dependency
+	// ordering. Three services with identical 50ms delays should all
+	// start within ~tens of ms of each other.
 	var mu sync.Mutex
 	startTimes := make(map[string]time.Time)
 	stopTimes := make(map[string]time.Time)
@@ -357,40 +231,40 @@ func TestEnv_ParallelStartStop(t *testing.T) {
 	recordStart := func(name string) { mu.Lock(); startTimes[name] = time.Now(); mu.Unlock() }
 	recordStop := func(name string) { mu.Lock(); stopTimes[name] = time.Now(); mu.Unlock() }
 
-	sB := &MockService{name: "B", startDelay: 50 * time.Millisecond, onStart: func() { recordStart("B") }, onStop: func() { recordStop("B") }}
-	sA := &MockService{name: "A", deps: []string{"B"}, startDelay: 50 * time.Millisecond, onStart: func() { recordStart("A") }, onStop: func() { recordStop("A") }}
-	sC := &MockService{name: "C", deps: []string{"B"}, startDelay: 50 * time.Millisecond, onStart: func() { recordStart("C") }, onStop: func() { recordStop("C") }}
+	mkSvc := func(name string) *MockService {
+		return &MockService{
+			name:       name,
+			startDelay: 50 * time.Millisecond,
+			stopDelay:  50 * time.Millisecond,
+			onStart:    func() { recordStart(name) },
+			onStop:     func() { recordStop(name) },
+		}
+	}
 
-	env := testrig.MustNew(testrig.With(sA, sB, sC))
+	env := testrig.New("test").With(mkSvc("A"), mkSvc("B"), mkSvc("C"))
 
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	if startTimes["A"].Before(startTimes["B"]) || startTimes["C"].Before(startTimes["B"]) {
-		t.Error("B must start before A and C")
+	startSpread := startTimes["C"].Sub(startTimes["A"])
+	if startSpread < 0 {
+		startSpread = -startSpread
 	}
-	diff := startTimes["A"].Sub(startTimes["C"])
-	if diff < 0 {
-		diff = -diff
-	}
-	if diff > 40*time.Millisecond {
-		t.Errorf("A and C did not start in parallel: diff=%v", diff)
+	if startSpread > 40*time.Millisecond {
+		t.Errorf("services did not start in parallel: spread=%v", startSpread)
 	}
 
 	if err := env.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}
 
-	if stopTimes["B"].Before(stopTimes["A"]) || stopTimes["B"].Before(stopTimes["C"]) {
-		t.Error("A and C must stop before B")
+	stopSpread := stopTimes["C"].Sub(stopTimes["A"])
+	if stopSpread < 0 {
+		stopSpread = -stopSpread
 	}
-	diff = stopTimes["A"].Sub(stopTimes["C"])
-	if diff < 0 {
-		diff = -diff
-	}
-	if diff > 40*time.Millisecond {
-		t.Errorf("A and C did not stop in parallel: diff=%v", diff)
+	if stopSpread > 40*time.Millisecond {
+		t.Errorf("services did not stop in parallel: spread=%v", stopSpread)
 	}
 }
 
@@ -399,25 +273,23 @@ func TestEnv_WithLifecycleHook_Success(t *testing.T) {
 
 	var startCalled, stopCalled bool
 	pm := &MockLifecycleHook{
-		afterStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStart: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
 			startCalled = true
-			val, _ := envCtx.Get("foo")
-			if val != "bar" {
-				t.Errorf("Expected foo=bar, got %s", val)
+			if props["foo"] != "bar" {
+				t.Errorf("Expected foo=bar, got %s", props["foo"])
 			}
 			return nil
 		},
-		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
 			stopCalled = true
-			val, _ := envCtx.Get("foo")
-			if val != "bar" {
-				t.Errorf("Expected foo=bar in AfterStop, got %s", val)
+			if props["foo"] != "bar" {
+				t.Errorf("Expected foo=bar in AfterStop, got %s", props["foo"])
 			}
 			return nil
 		},
 	}
 
-	env := testrig.MustNew(testrig.With(s1), testrig.WithHooks(pm))
+	env := testrig.New("test").With(s1).WithLifecycleHooks(pm)
 
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -438,16 +310,16 @@ func TestEnv_WithLifecycleHook_AfterStartError(t *testing.T) {
 
 	var stopCalled bool
 	pm := &MockLifecycleHook{
-		afterStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStart: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
 			return errors.New("start-fail")
 		},
-		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
 			stopCalled = true
 			return nil
 		},
 	}
 
-	env := testrig.MustNew(testrig.With(s1), testrig.WithHooks(pm))
+	env := testrig.New("test").With(s1).WithLifecycleHooks(pm)
 
 	err := env.Start(context.Background())
 	if err == nil {
@@ -465,12 +337,12 @@ func TestEnv_WithLifecycleHook_AfterStopError(t *testing.T) {
 	s1 := &MockService{name: "svc1"}
 
 	pm := &MockLifecycleHook{
-		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
 			return errors.New("stop-fail")
 		},
 	}
 
-	env := testrig.MustNew(testrig.With(s1), testrig.WithHooks(pm))
+	env := testrig.New("test").With(s1).WithLifecycleHooks(pm)
 
 	_ = env.Start(context.Background())
 	err := env.Stop(context.Background())
@@ -482,37 +354,38 @@ func TestEnv_WithLifecycleHook_AfterStopError(t *testing.T) {
 	}
 }
 
-func TestEnvContext_Logger(t *testing.T) {
+func TestEnv_PerServiceScopedLogger(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	svc := &loggerCapturingService{
 		MockService: MockService{name: "svc1"},
 	}
 
-	env := testrig.MustNew(testrig.With(svc), testrig.WithLogger(logger))
-	_ = env.Start(context.Background())
+	env := testrig.New("test").With(svc).WithLogger(logger)
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 	defer func() { _ = env.Stop(context.Background()) }()
 
-	capturedLogger := svc.capturedEnvCtx.Logger()
-	if capturedLogger == nil {
-		t.Error("Expected a non-nil logger, got nil")
+	if svc.capturedLogger == nil {
+		t.Fatal("Logger was not injected into service Start")
 	}
-	if capturedLogger == slog.Default() {
-		t.Error("Expected a scoped child logger, got the bare slog default")
+	if svc.capturedLogger == slog.Default() {
+		t.Error("Expected per-service scoped logger, got bare default logger")
 	}
 }
 
 type loggerCapturingService struct {
 	MockService
-	capturedEnvCtx testrig.EnvContext
+	capturedLogger *slog.Logger
 }
 
-func (s *loggerCapturingService) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
-	s.capturedEnvCtx = envCtx
+func (s *loggerCapturingService) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
+	s.capturedLogger = logger
 	return nil, nil
 }
 
 func TestEnv_Stop_NotRunning(t *testing.T) {
-	env := testrig.MustNew()
+	env := testrig.New("test")
 	if err := env.Stop(context.Background()); err != nil {
 		t.Errorf("Stop on idle env should be no-op and return nil, got %v", err)
 	}
@@ -520,7 +393,7 @@ func TestEnv_Stop_NotRunning(t *testing.T) {
 
 func TestEnv_Properties_EmptyOnIdleEnv(t *testing.T) {
 	// Properties() on a never-started env returns a non-nil but empty map.
-	env := testrig.MustNew()
+	env := testrig.New("test")
 	if got := env.Properties(); got == nil {
 		t.Error("expected non-nil empty map, got nil")
 	} else if len(got) != 0 {
@@ -532,7 +405,7 @@ func TestEnv_Properties_EmptyAfterStop(t *testing.T) {
 	// Once the env stops, Properties() must return empty — the runState is
 	// released so stale properties cannot leak to callers after Stop.
 	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "v"}}
-	env := testrig.MustNew(testrig.With(svc))
+	env := testrig.New("test").With(svc)
 
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -553,7 +426,7 @@ func TestEnv_Restart_PropertiesReflectFreshRun(t *testing.T) {
 	// Same Env instance, two Start/Stop cycles. The second run must not see
 	// stale properties from the first — the runState is reset on each Start.
 	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "first"}}
-	env := testrig.MustNew(testrig.With(svc))
+	env := testrig.New("test").With(svc)
 
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("first Start failed: %v", err)
@@ -577,48 +450,6 @@ func TestEnv_Restart_PropertiesReflectFreshRun(t *testing.T) {
 	}
 }
 
-func TestEnv_Stop_WithDependents(t *testing.T) {
-	// A -> B; Stop should wait for A before stopping B.
-	var stopOrder []string
-	var mu sync.Mutex
-	sB := &MockService{name: "B", onStop: func() { mu.Lock(); stopOrder = append(stopOrder, "B"); mu.Unlock() }}
-	sA := &MockService{name: "A", deps: []string{"B"}, onStop: func() { mu.Lock(); stopOrder = append(stopOrder, "A"); mu.Unlock() }}
-
-	env := testrig.MustNew(testrig.With(sA, sB))
-	_ = env.Start(context.Background())
-	_ = env.Stop(context.Background())
-
-	if len(stopOrder) != 2 || stopOrder[0] != "A" || stopOrder[1] != "B" {
-		t.Errorf("Unexpected stop order: %v", stopOrder)
-	}
-}
-
-func TestEnv_Stop_ContextCancelled_WhileWaitingForDependent(t *testing.T) {
-	// A -> B. During Stop, B's goroutine waits for A's stop signal because B
-	// has A as a dependent. If the parent ctx cancels before A's slow Stop
-	// finishes, B must surface the ctx error rather than block indefinitely.
-	sB := &MockService{name: "B"}
-	sA := &MockService{name: "A", deps: []string{"B"}, onStop: func() {
-		time.Sleep(500 * time.Millisecond)
-	}}
-
-	env := testrig.MustNew(testrig.With(sA, sB))
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	err := env.Stop(ctx)
-	if err == nil {
-		t.Fatal("expected error from ctx cancellation while waiting for dependent")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected DeadlineExceeded, got: %v", err)
-	}
-}
-
 func TestEnv_Stop_MultipleHooksError(t *testing.T) {
 	s1 := &MockService{name: "svc1"}
 
@@ -626,13 +457,13 @@ func TestEnv_Stop_MultipleHooksError(t *testing.T) {
 	h1Err := errors.New("err1")
 	h2Err := errors.New("err2")
 	h1 := &MockLifecycleHook{
-		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error { return h1Err },
+		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error { return h1Err },
 	}
 	h2 := &MockLifecycleHook{
-		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error { return h2Err },
+		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error { return h2Err },
 	}
 
-	env := testrig.MustNew(testrig.With(s1), testrig.WithHooks(h1, h2), testrig.WithLogger(logger))
+	env := testrig.New("test").With(s1).WithLifecycleHooks(h1, h2).WithLogger(logger)
 
 	_ = env.Start(context.Background())
 	err := env.Stop(context.Background())
@@ -652,13 +483,13 @@ func TestEnv_Stop_ConcurrentCallsAreIdempotent(t *testing.T) {
 	var stopCount, hookStopCount int32
 	svc := &MockService{name: "svc1", onStop: func() { atomic.AddInt32(&stopCount, 1) }}
 	hook := &MockLifecycleHook{
-		afterStop: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
 			atomic.AddInt32(&hookStopCount, 1)
 			return nil
 		},
 	}
 
-	env := testrig.MustNew(testrig.With(svc), testrig.WithHooks(hook))
+	env := testrig.New("test").With(svc).WithLifecycleHooks(hook)
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -682,71 +513,11 @@ func TestEnv_Stop_ConcurrentCallsAreIdempotent(t *testing.T) {
 	}
 }
 
-func TestEnvContext_TypeSafeHelpers(t *testing.T) {
-	s1 := &MockService{
-		name: "svc1",
-		properties: testrig.Properties{
-			"int":      "42",
-			"bool":     "true",
-			"duration": "1s",
-		},
-	}
-
-	svc2 := &loggerCapturingService{
-		MockService: MockService{name: "svc2", deps: []string{"svc1"}},
-	}
-
-	env := testrig.MustNew(testrig.With(s1, svc2))
-	_ = env.Start(context.Background())
-	defer func() { _ = env.Stop(context.Background()) }()
-
-	capturedCtx := svc2.capturedEnvCtx
-
-	if val, err := capturedCtx.Int("int"); err != nil || val != 42 {
-		t.Errorf("Int() failed: val=%v, err=%v", val, err)
-	}
-	if val, err := capturedCtx.Bool("bool"); err != nil || val != true {
-		t.Errorf("Bool() failed: val=%v, err=%v", val, err)
-	}
-	if val, err := capturedCtx.Duration("duration"); err != nil || val != time.Second {
-		t.Errorf("Duration() failed: val=%v, err=%v", val, err)
-	}
-}
-
-type scopedLoggerCapturingService struct {
-	MockService
-	capturedLogger *slog.Logger
-}
-
-func (s *scopedLoggerCapturingService) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
-	s.capturedLogger = envCtx.Logger()
-	return nil, nil
-}
-
-func TestEnv_Start_ProvidesPerServiceScopedLogger(t *testing.T) {
-	svc := &scopedLoggerCapturingService{
-		MockService: MockService{name: "scoped-svc"},
-	}
-
-	env := testrig.MustNew(testrig.With(svc))
-	if err := env.Start(context.Background()); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-	defer func() { _ = env.Stop(context.Background()) }()
-
-	if svc.capturedLogger == nil {
-		t.Fatal("Logger was not injected into service Start")
-	}
-	if svc.capturedLogger == slog.Default() {
-		t.Error("Expected per-service scoped logger, got bare default logger")
-	}
-}
-
 func TestEnv_Start_DuplicateServiceName(t *testing.T) {
 	s1 := &MockService{name: "dup-svc"}
 	s2 := &MockService{name: "dup-svc"}
 
-	env := testrig.MustNew(testrig.With(s1, s2))
+	env := testrig.New("test").With(s1, s2)
 	err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error for duplicate service name")
@@ -757,7 +528,7 @@ func TestEnv_Start_DuplicateServiceName(t *testing.T) {
 
 	// Verify env returns to stateIdle — a fresh env with unique services succeeds.
 	s3 := &MockService{name: "unique-svc"}
-	env2 := testrig.MustNew(testrig.With(s3))
+	env2 := testrig.New("test").With(s3)
 	if err := env2.Start(context.Background()); err != nil {
 		t.Fatalf("Start with unique services failed: %v", err)
 	}
@@ -774,30 +545,30 @@ func TestEnv_WithLogger_NilPanics(t *testing.T) {
 			t.Errorf("Unexpected panic message: %v", r)
 		}
 	}()
-	testrig.MustNew(testrig.WithLogger(nil))
+	testrig.New("test").WithLogger(nil)
 }
 
-func TestEnv_WithHooks_NilHookPanics(t *testing.T) {
+func TestEnv_WithLifecycleHooks_NilHookPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {
-			t.Fatal("Expected panic from WithHooks(nil)")
+			t.Fatal("Expected panic from WithLifecycleHooks(nil)")
 		}
 	}()
-	testrig.MustNew(testrig.WithHooks(nil))
+	testrig.New("test").WithLifecycleHooks(nil)
 }
 
-func TestEnv_WithHooks_NilInMiddlePanics(t *testing.T) {
+func TestEnv_WithLifecycleHooks_NilInMiddlePanics(t *testing.T) {
 	valid := &MockLifecycleHook{}
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("Expected panic from WithHooks(valid, nil)")
+			t.Fatal("Expected panic from WithLifecycleHooks(valid, nil)")
 		}
 		if !strings.Contains(asString(r), "index 1") {
 			t.Errorf("Expected panic to mention index 1, got: %v", r)
 		}
 	}()
-	testrig.MustNew(testrig.WithHooks(valid, nil))
+	testrig.New("test").WithLifecycleHooks(valid, nil)
 }
 
 func TestEnv_With_NilServicePanics(t *testing.T) {
@@ -806,7 +577,7 @@ func TestEnv_With_NilServicePanics(t *testing.T) {
 			t.Fatal("Expected panic from With(nil)")
 		}
 	}()
-	testrig.MustNew(testrig.With(nil))
+	testrig.New("test").With(nil)
 }
 
 func TestEnv_With_NilInMiddlePanics(t *testing.T) {
@@ -820,25 +591,128 @@ func TestEnv_With_NilInMiddlePanics(t *testing.T) {
 			t.Errorf("Expected panic to mention index 1, got: %v", r)
 		}
 	}()
-	testrig.MustNew(testrig.With(valid, nil))
+	testrig.New("test").With(valid, nil)
 }
 
-func TestEnvBuilderBranching(t *testing.T) {
-	svcA := &MockService{name: "a"}
-	svcB := &MockService{name: "b"}
-	svcC := &MockService{name: "c"}
-
-	// Shared base options compose into independent envs via the option-list
-	// pattern. Two envs built from a common base do not share configuration.
-	baseOpts := []testrig.Option{testrig.With(svcA)}
-	envA := testrig.MustNew(append(baseOpts, testrig.WithName("A"), testrig.With(svcB))...)
-	envB := testrig.MustNew(append(baseOpts, testrig.WithName("B"), testrig.With(svcC))...)
-
-	if envA.Name() != "A" {
-		t.Errorf("envA.Name() = %q, want %q", envA.Name(), "A")
+func TestEnv_NameSetByConstructor(t *testing.T) {
+	env := testrig.New("my-env")
+	if env.Name() != "my-env" {
+		t.Errorf("env.Name() = %q, want %q", env.Name(), "my-env")
 	}
-	if envB.Name() != "B" {
-		t.Errorf("envB.Name() = %q, want %q", envB.Name(), "B")
+}
+
+func TestEnv_WithStages_RunsStagesInOrder(t *testing.T) {
+	// Two-stage track: A starts first, then B and C start concurrently
+	// after A is up. Verify ordering by recording start timestamps.
+	var mu sync.Mutex
+	startTimes := make(map[string]time.Time)
+	recordStart := func(name string) { mu.Lock(); startTimes[name] = time.Now(); mu.Unlock() }
+
+	mkSvc := func(name string) *MockService {
+		return &MockService{
+			name:       name,
+			startDelay: 50 * time.Millisecond,
+			onStart:    func() { recordStart(name) },
+		}
+	}
+	a, b, c := mkSvc("A"), mkSvc("B"), mkSvc("C")
+
+	env := testrig.New("staged").WithStages(testrig.NewStages(a).Then(b, c))
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	// A must finish starting before B and C start.
+	if !startTimes["A"].Before(startTimes["B"]) {
+		t.Errorf("A should start before B; A=%v B=%v", startTimes["A"], startTimes["B"])
+	}
+	if !startTimes["A"].Before(startTimes["C"]) {
+		t.Errorf("A should start before C; A=%v C=%v", startTimes["A"], startTimes["C"])
+	}
+
+	// B and C should start within ~tens of ms of each other (parallel
+	// within stage 2).
+	spread := startTimes["C"].Sub(startTimes["B"])
+	if spread < 0 {
+		spread = -spread
+	}
+	if spread > 40*time.Millisecond {
+		t.Errorf("B and C should start in parallel within stage 2; spread=%v", spread)
+	}
+}
+
+func TestEnv_WithStages_StopsInReverseStageOrder(t *testing.T) {
+	// Two-stage track: stage 1 = {A}, stage 2 = {B, C}. On Stop, stage 2
+	// must finish before stage 1.
+	var mu sync.Mutex
+	stopTimes := make(map[string]time.Time)
+	recordStop := func(name string) { mu.Lock(); stopTimes[name] = time.Now(); mu.Unlock() }
+
+	mkSvc := func(name string) *MockService {
+		return &MockService{
+			name:      name,
+			stopDelay: 50 * time.Millisecond,
+			onStop:    func() { recordStop(name) },
+		}
+	}
+	a, b, c := mkSvc("A"), mkSvc("B"), mkSvc("C")
+
+	env := testrig.New("staged-stop").WithStages(testrig.NewStages(a).Then(b, c))
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	if err := env.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+
+	// A's Stop runs after B's and C's Stops.
+	if !stopTimes["A"].After(stopTimes["B"]) {
+		t.Errorf("A should stop after B; A=%v B=%v", stopTimes["A"], stopTimes["B"])
+	}
+	if !stopTimes["A"].After(stopTimes["C"]) {
+		t.Errorf("A should stop after C; A=%v C=%v", stopTimes["A"], stopTimes["C"])
+	}
+}
+
+func TestEnv_WithStages_NilPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Expected panic from WithStages(nil)")
+		}
+	}()
+	testrig.New("test").WithStages(nil)
+}
+
+func TestEnv_TracksRunInParallel(t *testing.T) {
+	// Two independent tracks (each single-stage, single service) must
+	// start concurrently — same wall-clock parallelism as if both were
+	// in one With call.
+	var mu sync.Mutex
+	startTimes := make(map[string]time.Time)
+	recordStart := func(name string) { mu.Lock(); startTimes[name] = time.Now(); mu.Unlock() }
+
+	mkSvc := func(name string) *MockService {
+		return &MockService{
+			name:       name,
+			startDelay: 50 * time.Millisecond,
+			onStart:    func() { recordStart(name) },
+		}
+	}
+	a, b := mkSvc("A"), mkSvc("B")
+
+	env := testrig.New("two-tracks").With(a).With(b)
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	spread := startTimes["B"].Sub(startTimes["A"])
+	if spread < 0 {
+		spread = -spread
+	}
+	if spread > 40*time.Millisecond {
+		t.Errorf("two tracks did not start in parallel; spread=%v", spread)
 	}
 }
 

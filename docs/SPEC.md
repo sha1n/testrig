@@ -4,7 +4,7 @@ This document describes the public API and runtime semantics of `testrig` in its
 
 ## Purpose
 
-`testrig` is a Go library for building and managing multi-service test environments. It orchestrates service lifecycles with dependency awareness and propagates configuration between services as they come up, so an integration test can declare *what* it needs (e.g. "a Postgres, a WireMock") and let the framework bring them up in the right order, expose their connection details to the test, and tear them down cleanly.
+`testrig` is a Go library for building and managing multi-service test environments. It orchestrates service lifecycles in parallel and aggregates the properties they publish, so an integration test can declare *what* it needs (e.g. "a Postgres, a WireMock") and let the framework bring them up concurrently, expose their connection details to the test, and tear them down cleanly.
 
 The framework is designed for integration tests that need real services (databases, mocks, etc.) rather than for unit tests.
 
@@ -17,12 +17,10 @@ The framework is designed for integration tests that need real services (databas
 ## Project Layout
 
 ```
-.                         — core framework (Env, Service, SetEnvVars)
+.                         — core framework (Env, Service, Stages, Properties, LifecycleHook, SetEnvVars)
 services/                 — pre-configured services (each implements testrig.Service)
   ├── postgres/           — PostgreSQL service
   └── wiremock/           — WireMock service
-internal/dag/             — directed-acyclic-graph cycle validation
-internal/testutil/        — shared test helpers (e.g. MockEnvContext)
 examples/                 — runnable integration examples
   ├── viper-app/          — Viper config-injection example
   └── koanf-app/          — koanf config-injection example
@@ -37,60 +35,34 @@ docs/                     — specs and plans
 
 `type Properties map[string]string`
 
-A flat key/value map produced by services as they start. Services publish their connection details (host, port, URL, credentials, etc.) to `Properties`, where downstream services and the test code can read them.
-
-Helpers on `Properties`:
-- `Int(key) (int, error)`
-- `Bool(key) (bool, error)`
-- `Duration(key) (time.Duration, error)`
-
-Missing keys return errors. The map itself is plain — callers can range over it directly.
+A flat key/value map produced by services as they start. Services publish their connection details (host, port, URL, credentials, etc.) to `Properties`. After `env.Start`, the test reads `env.Properties()` and feeds it into its config library — typed parsing belongs there, not here.
 
 ### `Service`
 
 ```go
 type Service interface {
     Name() string
-    Dependencies() []string
-    Start(ctx context.Context, envCtx EnvContext) (Properties, error)
+    Start(ctx context.Context, logger *slog.Logger) (Properties, error)
     Stop(ctx context.Context) error
 }
 ```
 
-A `Service` is a stateful dependency with a lifecycle. The framework calls `Start` once all dependencies are running, and `Stop` once all dependents have stopped.
+A `Service` is a stateful dependency with a lifecycle. The framework calls `Start` for every service and `Stop` for every service whose `Start` returned without error. Within a stage, services start (and stop) concurrently; see `Stages` below for opt-in ordering across groups of services.
 
-- `Name()` — unique within the environment; used in logs, dependency wiring, and stop-order coordination.
-- `Dependencies()` — names of services that must be running before this one starts. Cycles are rejected at `Env.Start()`.
-- `Start` returns the properties this service contributes to the shared `Properties` map.
-- `Stop` is invoked in reverse-dependency order. A `Service` is owned by the `Env` it was added to; passing the same instance to multiple Envs is a programmer error.
-
-### `EnvContext`
-
-```go
-type EnvContext interface {
-    Get(key string) (string, bool)
-    Int(key string) (int, error)
-    Bool(key string) (bool, error)
-    Duration(key string) (time.Duration, error)
-    Properties() Properties
-    Logger() *slog.Logger
-}
-```
-
-Read-only handle into the environment, passed to `Service.Start`. Implementations are concurrency-safe; the underlying property map is locked during reads. `Logger()` returns a per-service scoped logger (`service=<name>` attribute).
+- `Name()` — unique within the environment; used in logs.
+- `Start` returns the properties this service contributes to the shared `Properties` map. Sibling services within the same stage cannot observe each other's published properties; cross-service wiring belongs either in a later stage or in test setup code between `env.Start` and the assertions.
+- A `Service` is owned by the `Env` it was added to; passing the same instance to multiple Envs is a programmer error.
 
 ### `Env`
 
-The orchestrator. Constructed via `New(opts ...Option) (*Env, error)` (or `MustNew` for tests where invalid configuration is a programmer-checked condition). All configuration is applied at construction; the resulting `*Env` is not further mutated until `Start` is called.
+The orchestrator. Constructed via `New(name string) *Env` and configured through chainable fluent methods on `*Env`. Configuration is applied before `Start`; the resulting `*Env` is not further mutated until `Start` is called.
 
 ```go
-env, err := testrig.New(
-    testrig.WithName("integration-tests"),
-    testrig.WithLogger(myLogger),
-    testrig.WithHooks(myHook),
-    testrig.With(svc1, svc2, svc3),
-)
-if err != nil { /* ... */ }
+env := testrig.New("integration-tests").
+    With(svc1, svc2).
+    WithStages(testrig.NewStages(svc3).Then(svc4, svc5)).
+    WithLogger(myLogger).
+    WithLifecycleHooks(myHook)
 
 if err := env.Start(ctx); err != nil { /* ... */ }
 defer env.Stop(context.Background())
@@ -98,30 +70,22 @@ defer env.Stop(context.Background())
 props := env.Properties()
 ```
 
-#### Options
+#### Fluent builder methods
 
-All options validate their input and return an error from `New` rather than panicking. `MustNew` wraps `New` and panics on error — convenient when configuration is static.
-
-| Option | Semantics |
+| Method | Semantics |
 |---|---|
-| `New()` (no options) | Defaults: name `"testenv"`, `slog.Default()` logger, no hooks, no services. |
-| `WithName(string)` | Last-wins. Errors on empty. |
-| `WithLogger(*slog.Logger)` | Last-wins. Errors on nil. |
-| `WithHooks(...LifecycleHook)` | **Accumulative** — appends across calls. Errors if any hook is nil. |
-| `With(...Service)` | **Accumulative** — appends across calls. Errors if any service is nil. |
+| `New(name string) *Env` | Creates an env with the given display name (used in logs) and `slog.Default()` logger. |
+| `(*Env).With(...Service) *Env` | Appends a single-stage track containing the given services. Multiple calls accumulate as distinct tracks. Panics on nil. |
+| `(*Env).WithStages(*Stages) *Env` | Appends a multi-stage track. Panics on nil. |
+| `(*Env).WithLogger(*slog.Logger) *Env` | Replaces the env logger. Panics on nil. |
+| `(*Env).WithLifecycleHooks(...LifecycleHook) *Env` | Appends lifecycle hooks (accumulative). Panics on nil. |
 
-To build multiple envs from a shared configuration, compose options as a slice:
-
-```go
-baseOpts := []testrig.Option{testrig.With(commonSvc)}
-envA := testrig.MustNew(append(baseOpts, testrig.WithName("A"))...)
-envB := testrig.MustNew(append(baseOpts, testrig.WithName("B"))...)
-```
+For tests that share configuration across multiple envs, factor a helper that returns `*Env` after applying common setup, then chain further methods on the returned env.
 
 #### Lifecycle methods
 
-- `Start(ctx) error` — validates dependencies, then starts all services concurrently, each blocking on its declared dependencies. Aborts and rolls back via `Stop` on first error. Re-running on a still-running env returns an error. Re-running on an already-stopped env is allowed (state is reset on each `Start`).
-- `Stop(ctx) error` — stops services in reverse-dependency order. Idempotent on idle envs and under concurrent callers.
+- `Start(ctx) error` — runs all registered tracks concurrently; within a track, stages run sequentially. Aborts and rolls back via `Stop` on first error; rollback only stops services whose `Start` returned without error. Re-running on a still-running env returns an error. Re-running on an already-stopped env is allowed (state is reset on each `Start`).
+- `Stop(ctx) error` — stops every successfully-started service. Tracks stop concurrently; within a track, stages stop in reverse order. Idempotent on idle envs and under concurrent callers.
 - `Properties() Properties` — snapshot of current properties. Returns a copy. Returns an empty (non-nil) map when the env is idle (never started, or stopped).
 - `Name() string`
 
@@ -135,8 +99,8 @@ Calling `Start` from `stateStarting` or `stateRunning` returns an error. Calling
 
 ```go
 type LifecycleHook interface {
-    AfterStart(ctx, envCtx EnvContext) error
-    AfterStop(ctx, envCtx EnvContext) error
+    AfterStart(ctx context.Context, props Properties, logger *slog.Logger) error
+    AfterStop(ctx context.Context, props Properties, logger *slog.Logger) error
 }
 ```
 
@@ -144,9 +108,9 @@ type LifecycleHook interface {
 
 `AfterStop` fires once every service has stopped, as part of the `Stop` sequence. All registered hooks run even if a previous hook returned an error, so cleanup-style hooks always get a chance to execute. Returned errors are joined into the error returned by `Env.Stop`.
 
-Hooks receive a stable, immutable `EnvContext` snapshot taken before `properties` is cleared, so `AfterStop` sees the same view as `AfterStart`.
+Hooks receive a stable property snapshot taken before `properties` is cleared, so `AfterStop` sees the same view as `AfterStart`.
 
-Hooks are an opt-in convenience for cross-cutting concerns that span the whole env (e.g. running migrations after Postgres is up, writing a debug artifact, emitting env-startup metrics). Most setup is better expressed as a plain `Service` with `Dependencies` — hooks are most useful when you need work that runs *after* every service has stopped, which a service's own `Stop` cannot model.
+Hooks are an opt-in convenience for cross-cutting concerns that span the whole env (e.g. running migrations after Postgres is up, writing a debug artifact, emitting env-startup metrics). Most setup is better expressed as a plain `Service` — hooks are most useful when you need work that runs *after* every service has stopped, which a service's own `Stop` cannot model.
 
 ### `SetEnvVars`
 
@@ -156,9 +120,26 @@ func SetEnvVars(t *testing.T, props Properties)
 
 Sets each property as an OS environment variable using `t.Setenv`, with deterministic (sorted) order. Cleanup is automatic via the `*testing.T`. Panics if the test has already called `t.Parallel()`. For parallel-safe tests, pass `env.Properties()` directly to your config library's API instead.
 
+### `Stages`
+
+```go
+type Stages struct{ /* opaque */ }
+
+func NewStages(services ...Service) *Stages
+func (s *Stages) Then(services ...Service) *Stages
+```
+
+A *track* is a startup pipeline registered by a single `With` or `WithStages` call. Tracks run concurrently with each other; within a track, stages run sequentially.
+
+A `Stages` describes an ordered sequence of stages for one track: within a stage services start concurrently, and stages execute one after another in declaration order. Pass to `Env.WithStages`.
+
+Use `With` for independent services that can start in any order; reach for `WithStages` only when one service needs another to be ready before its `Start` runs (e.g. running schema migrations only after Postgres is up).
+
+On `Stop`, stages within a track tear down in **reverse order** (last stage first); services within a stage stop concurrently. Tracks themselves stop in parallel.
+
 ### Per-service logger
 
-`Env` scopes its logger with `service=<name>` before handing it to each service via `EnvContext.Logger()`. Services that want a deeper child can compose with the standard library directly: `envCtx.Logger().With("subscope", "x")`.
+`Env` scopes its logger with `service=<name>` before passing it to each `Service.Start`. Services that want a deeper child can compose with the standard library directly: `logger.With("subscope", "x")`.
 
 ## Property Injection Patterns
 
@@ -188,7 +169,7 @@ See `examples/viper-app` and `examples/koanf-app` for full patterns.
 
 Each package under `services/` provides a service type — a pre-configured test harness for a specific dependency. Each:
 
-- Implements `testrig.Service`, so it can be added to an `Env` via `env.With(...)`.
+- Implements `testrig.Service`, so it can be added to an `Env` via `(*Env).With(...)` or `(*Env).WithStages(...)`.
 - Is constructed with `New(name)` and configured via chainable `With*` methods that mutate and return the value (no separate Builder type).
 - Exposes typed-client accessors directly (e.g. `*postgres.Postgres.DSN()`, `.DB(ctx)`; `*wiremock.WireMock.URL()`, `.Client()`). These are valid only after `Env.Start()`.
 - Publishes its outputs as `Properties` under `<name>.<field>` keys by default; each key can be overridden via a `WithXxxPropertyName` setter so the service publishes directly under the application's expected config keys.
@@ -214,16 +195,16 @@ A WireMock service backed by testcontainers-go.
 
 ## Concurrency & Safety
 
-- All configuration is applied at construction (`New(opts...)`); the resulting `*Env` is not mutated thereafter until `Start` is called. Calling `Start` concurrently with itself, or while the env is running, is rejected by the state machine.
-- The shared `Properties` map is guarded by an internal `sync.RWMutex`; reads in `Service.Start` use the `EnvContext` accessors.
-- Services are started concurrently using `errgroup`. Each service blocks on signals from its declared dependencies, ensuring `Service.Start` only sees properties of services it depends on.
-- `Stop` waits for all dependents to stop before stopping a given service.
+- All configuration is applied via the fluent builder before `Start`; mutating the env (or calling `Start` again) while it is running is a programmer error and is rejected by the state machine.
+- Tracks are started concurrently using `errgroup`. Within a track, stages run sequentially; within a stage, services start concurrently. Each `Service.Start` receives its own scoped logger.
+- The aggregated `Properties` map is guarded by an internal `sync.RWMutex`; `env.Properties()` returns a snapshot copy.
+- `Stop` runs tracks concurrently and reverses stage order within each track.
 
 ## Conventions
 
 - Tests use the `_test` package suffix (black-box testing) by default, with white-box `internals_test.go` files where private behaviour needs coverage.
-- No mocking frameworks: hand-written mocks live in test files or `internal/testutil`.
-- Options validate their input and return errors from `New`; use `MustNew` if you want a panic on misconfiguration.
+- No mocking frameworks: hand-written mocks live in test files.
+- Fluent builder methods panic on programmer-error inputs (nil service, nil logger, nil hook). Empty names are allowed.
 
 ## Build & Test
 

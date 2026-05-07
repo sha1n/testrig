@@ -75,16 +75,13 @@ func (t *WireMock) WithURLPropertyName(name string) *WireMock {
 // Name implements testrig.Service.
 func (t *WireMock) Name() string { return t.name }
 
-// Dependencies implements testrig.Service. WireMock is a leaf service.
-func (t *WireMock) Dependencies() []string { return nil }
-
 // Start implements testrig.Service. Returns an error if called while a
 // previous Start is still active (i.e. Stop has not been called).
-func (t *WireMock) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
+func (t *WireMock) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
 	if t.container != nil {
 		return nil, fmt.Errorf("wiremock service %q already started", t.name)
 	}
-	t.logger = envCtx.Logger()
+	t.logger = logger
 	t.logger.Info("🎬 Starting WireMock service", "name", t.name)
 
 	container, err := testcontainers.Run(ctx,

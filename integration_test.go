@@ -3,6 +3,7 @@ package testrig_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,9 +17,9 @@ import (
 
 func TestIntegration_FullLifecycle(t *testing.T) {
 	s1 := &MockService{name: "svc1", properties: testrig.Properties{"a": "1"}}
-	s2 := &MockService{name: "svc2", deps: []string{"svc1"}, properties: testrig.Properties{"b": "2"}}
+	s2 := &MockService{name: "svc2", properties: testrig.Properties{"b": "2"}}
 
-	env := testrig.MustNew(testrig.With(s1, s2))
+	env := testrig.New("test").With(s1, s2)
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -41,7 +42,7 @@ func TestIntegration_ParallelEnvsAreIndependent(t *testing.T) {
 	t.Run("env1", func(t *testing.T) {
 		t.Parallel()
 		svc := &MockService{name: "parallel-svc", properties: testrig.Properties{"x": "env1-val"}}
-		env := testrig.MustNew(testrig.With(svc))
+		env := testrig.New("test").With(svc)
 		if err := env.Start(context.Background()); err != nil {
 			t.Fatalf("Start failed: %v", err)
 		}
@@ -55,7 +56,7 @@ func TestIntegration_ParallelEnvsAreIndependent(t *testing.T) {
 	t.Run("env2", func(t *testing.T) {
 		t.Parallel()
 		svc := &MockService{name: "parallel-svc", properties: testrig.Properties{"x": "env2-val"}}
-		env := testrig.MustNew(testrig.With(svc))
+		env := testrig.New("test").With(svc)
 		if err := env.Start(context.Background()); err != nil {
 			t.Fatalf("Start failed: %v", err)
 		}
@@ -74,7 +75,7 @@ func TestIntegration_ServiceStartError_PartialRollback(t *testing.T) {
 	s1 := &MockService{name: "svc1", onStop: func() { stopped1 = true }}
 	s2 := &MockService{name: "svc2", startErr: errors.New("fail")}
 
-	env := testrig.MustNew(testrig.With(s1, s2))
+	env := testrig.New("test").With(s1, s2)
 	err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error")
@@ -87,7 +88,7 @@ func TestIntegration_ServiceStartError_PartialRollback(t *testing.T) {
 // --- Edge Cases ---
 
 func TestIntegration_NoServices(t *testing.T) {
-	env := testrig.MustNew()
+	env := testrig.New("test")
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -103,7 +104,7 @@ func TestIntegration_NoServices(t *testing.T) {
 func TestIntegration_ConcurrentStartCalls(t *testing.T) {
 	svc := &MockService{name: "conc-svc", startDelay: 50 * time.Millisecond}
 
-	env := testrig.MustNew(testrig.With(svc))
+	env := testrig.New("test").With(svc)
 
 	var wg sync.WaitGroup
 	var successes, failures atomic.Int32
@@ -134,7 +135,7 @@ func TestIntegration_ConcurrentStartCalls(t *testing.T) {
 func TestIntegration_ContextCancelDuringStart(t *testing.T) {
 	svc := &MockService{name: "slow-cancel-svc", startDelay: 5 * time.Second}
 
-	env := testrig.MustNew(testrig.With(svc))
+	env := testrig.New("test").With(svc)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -156,7 +157,7 @@ func TestIntegration_ContextCancelDuringStart(t *testing.T) {
 func TestIntegration_StartRetryAfterFailure(t *testing.T) {
 	svc := &MockService{name: "retry-svc", startErr: errors.New("temp-fail")}
 
-	env := testrig.MustNew(testrig.With(svc))
+	env := testrig.New("test").With(svc)
 	err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected first Start to fail")
@@ -182,13 +183,13 @@ func TestIntegration_FreshEnv_DoesNotInheritFromPriorEnv(t *testing.T) {
 	svc1 := &MockService{name: "shared-svc", properties: testrig.Properties{"a": "1"}}
 	svc2 := &MockService{name: "second-only", properties: testrig.Properties{"b": "2"}}
 
-	first := testrig.MustNew(testrig.With(svc1))
+	first := testrig.New("test").With(svc1)
 	if err := first.Start(context.Background()); err != nil {
 		t.Fatalf("First Start failed: %v", err)
 	}
 	_ = first.Stop(context.Background())
 
-	env := testrig.MustNew(testrig.With(svc1, svc2))
+	env := testrig.New("test").With(svc1, svc2)
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Second Start failed: %v", err)
 	}
@@ -210,12 +211,12 @@ func TestIntegration_AfterStartHookFailure_RollsBackServices(t *testing.T) {
 	svc := &MockService{name: "hook-fail-svc", properties: testrig.Properties{"k": "v"}, onStop: func() { stopped = true }}
 
 	hook := &MockLifecycleHook{
-		afterStart: func(ctx context.Context, envCtx testrig.EnvContext) error {
+		afterStart: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
 			return errors.New("hook-fail")
 		},
 	}
 
-	env := testrig.MustNew(testrig.With(svc), testrig.WithHooks(hook))
+	env := testrig.New("test").With(svc).WithLifecycleHooks(hook)
 	err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error from hook failure")
@@ -231,24 +232,15 @@ func TestIntegration_AfterStartHookFailure_RollsBackServices(t *testing.T) {
 // --- WithName ---
 
 func TestIntegration_WithName(t *testing.T) {
-	env := testrig.MustNew(testrig.WithName("my-custom-env"))
+	env := testrig.New("my-custom-env")
 	if env.Name() != "my-custom-env" {
 		t.Errorf("Expected name 'my-custom-env', got %q", env.Name())
 	}
 }
 
-func TestIntegration_WithName_EmptyPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Expected panic from empty name")
-		}
-	}()
-	testrig.MustNew(testrig.WithName(""))
-}
-
 func TestIntegration_WithName_AppearsInError(t *testing.T) {
 	svc := &MockService{name: "svc1"}
-	env := testrig.MustNew(testrig.WithName("named-env"), testrig.With(svc))
+	env := testrig.New("named-env").With(svc)
 
 	if err := env.Start(context.Background()); err != nil {
 		t.Fatalf("First Start failed: %v", err)

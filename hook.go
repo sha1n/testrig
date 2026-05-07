@@ -1,9 +1,12 @@
 package testrig
 
-import "context"
+import (
+	"context"
+	"log/slog"
+)
 
 // LifecycleHook observes successful Env start and shutdown. Hooks attached
-// via WithHooks are invoked in registration order.
+// via Env.WithLifecycleHooks are invoked in registration order.
 //
 // Typical uses: setting OS environment variables for the test process,
 // writing transient config files, registering cleanup tasks. For most
@@ -14,12 +17,15 @@ type LifecycleHook interface {
 	// started successfully and the env has transitioned to the running
 	// state. It is part of the Start sequence: if it returns an error,
 	// Env.Start fails and triggers a full rollback (Stop is invoked).
-	AfterStart(ctx context.Context, envCtx EnvContext) error
+	//
+	// `props` is a stable snapshot of the environment's properties at
+	// the moment AfterStart fires; it is safe to read concurrently.
+	AfterStart(ctx context.Context, props Properties, logger *slog.Logger) error
 
 	// AfterStop is called once every service in the environment has
-	// stopped, as part of the Stop sequence. All registered hooks run even
-	// if a previous hook returned an error, so cleanup-style hooks always
-	// get a chance to execute. Returned errors are joined into the error
-	// returned by Env.Stop.
-	AfterStop(ctx context.Context, envCtx EnvContext) error
+	// stopped, as part of the Stop sequence. All registered hooks run
+	// even if a previous hook returned an error, so cleanup-style hooks
+	// always get a chance to execute. Returned errors are joined into
+	// the error returned by Env.Stop.
+	AfterStop(ctx context.Context, props Properties, logger *slog.Logger) error
 }

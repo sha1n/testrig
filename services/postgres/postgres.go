@@ -147,16 +147,13 @@ func (t *Postgres) WithDSNPropertyName(name string) *Postgres {
 // Name implements testrig.Service.
 func (t *Postgres) Name() string { return t.name }
 
-// Dependencies implements testrig.Service. Postgres is a leaf service.
-func (t *Postgres) Dependencies() []string { return nil }
-
 // Start implements testrig.Service. Returns an error if called while a
 // previous Start is still active (i.e. Stop has not been called).
-func (t *Postgres) Start(ctx context.Context, envCtx testrig.EnvContext) (testrig.Properties, error) {
+func (t *Postgres) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
 	if t.container != nil {
 		return nil, fmt.Errorf("postgres service %q already started", t.name)
 	}
-	t.logger = envCtx.Logger()
+	t.logger = logger
 	t.logger.Info("🎬 Starting Postgres service", "name", t.name)
 
 	container, err := postgres.Run(ctx,
