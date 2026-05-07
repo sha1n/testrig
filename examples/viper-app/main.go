@@ -9,8 +9,8 @@
 //  3. exposes GET /lookup?key=<k> for inspection.
 //
 // The integration: testenv.Setup brings up Postgres, a custom in-process
-// schema-seeding service (see seed/), and WireMock through testrig.
-// Stages enforce that the seeder runs only after Postgres is up.
+// schema-seeding service (see examples/internal/seed), and WireMock through
+// testrig. Stages enforce that the seeder runs only after Postgres is up.
 //
 // Run:
 //
@@ -25,8 +25,8 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/sha1n/testrig/examples/internal/sampleapp"
 	"github.com/sha1n/testrig/examples/viper-app/config"
-	"github.com/sha1n/testrig/examples/viper-app/server"
 	"github.com/sha1n/testrig/examples/viper-app/testenv"
 )
 
@@ -52,7 +52,7 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
-	srv := server.New(cfg, db)
+	srv := sampleapp.New(db, cfg.RemoteURL)
 	log.Printf("listening on :%d (DATABASE_URL=%s, REMOTE_URL=%s)",
 		cfg.AppPort, cfg.DatabaseURL, cfg.RemoteURL)
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.AppPort), srv.Handler()); err != nil {

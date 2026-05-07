@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	"github.com/sha1n/testrig"
-	"github.com/sha1n/testrig/examples/viper-app/seed"
+	"github.com/sha1n/testrig/examples/internal/seed"
 	"github.com/sha1n/testrig/services/postgres"
 	"github.com/sha1n/testrig/services/wiremock"
 )

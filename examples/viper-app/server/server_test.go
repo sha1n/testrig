@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wiremock/go-wiremock"
 
+	"github.com/sha1n/testrig/examples/internal/sampleapp"
 	"github.com/sha1n/testrig/examples/viper-app/config"
-	"github.com/sha1n/testrig/examples/viper-app/server"
 	"github.com/sha1n/testrig/examples/viper-app/testenv"
 )
 
@@ -52,7 +52,7 @@ func TestMain(m *testing.M) {
 		log.Fatalf("pg.DB: %v", err)
 	}
 
-	handler = server.New(cfg, db).Handler()
+	handler = sampleapp.New(db, cfg.RemoteURL).Handler()
 
 	code := m.Run()
 
