@@ -1,7 +1,8 @@
 # koanf-app — testrig integration example (koanf)
 
 Mirrors `examples/viper-app` but uses [koanf](https://github.com/knadh/koanf)
-for typed configuration.
+for typed configuration. See [`examples/viper-app`](../viper-app/) for fuller
+inline documentation.
 
 ## Layout
 
@@ -22,7 +23,7 @@ is in `examples/internal/seed` — both shared with `examples/viper-app`.
 go run ./examples/koanf-app/
 ```
 
-Requires Docker.
+Requires Docker (testcontainers spins up Postgres + WireMock).
 
 ## Tests
 
