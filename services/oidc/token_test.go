@@ -125,6 +125,20 @@ func TestToken_AuthorizationCode_NoAudience_IDTokenOnly(t *testing.T) {
 	if resp.AccessToken != "" {
 		t.Errorf("access_token unexpectedly present: %s", resp.AccessToken)
 	}
+	// auth_time MUST be present even when no audience was requested.
+	// azp MUST be absent (per OIDC §2: only present when audience was requested).
+	parser := jwt.NewParser()
+	parsed, _, err := parser.ParseUnverified(resp.IDToken, jwt.MapClaims{})
+	if err != nil {
+		t.Fatalf("parse id_token: %v", err)
+	}
+	c := parsed.Claims.(jwt.MapClaims)
+	if _, ok := c["auth_time"]; !ok {
+		t.Errorf("auth_time missing on no-audience id_token")
+	}
+	if _, ok := c["azp"]; ok {
+		t.Errorf("azp unexpectedly present on no-audience id_token: %v", c["azp"])
+	}
 }
 
 func TestToken_IDTokenClaims(t *testing.T) {
@@ -197,6 +211,24 @@ func TestToken_AccessTokenClaims_ClientCredentials(t *testing.T) {
 	}
 	if c["aud"] != "test-api" {
 		t.Errorf("aud = %v, want test-api", c["aud"])
+	}
+}
+
+func TestToken_ClientCredentials_Response_IncludesScope(t *testing.T) {
+	iss := startMinimal(t)
+	form := url.Values{
+		"grant_type": {"client_credentials"},
+		"audience":   {"test-api"},
+		"scope":      {"read"},
+	}
+	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
+	_, _, body := httpPostForm(t, iss.TokenURL(), form, basic)
+	var resp tokenResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Scope != "read" {
+		t.Errorf("response scope = %q, want \"read\"", resp.Scope)
 	}
 }
 
