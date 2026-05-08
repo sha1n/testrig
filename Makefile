@@ -52,17 +52,13 @@ go-lint:
 		 if [ -n "$$PKGS" ]; then go vet $(MODFLAGS) $$PKGS; fi); \
 	done
 
-## golangci-lint: Runs golangci-lint (fails the target when issues are reported)
+## golangci-lint: Runs golangci-lint via the version pinned in tools/go.mod (fails the target when issues are reported)
 .PHONY: golangci-lint
 golangci-lint:
-	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "  !  golangci-lint not installed, skipping..."; \
-		exit 0; \
-	fi
-	@echo "  >  Running golangci-lint..."
+	@echo "  >  Running golangci-lint (pinned via tools/)..."
 	@for mod in $(MODULES); do \
 		echo "  >  golangci-lint $$mod"; \
-		(cd $$mod && golangci-lint run ./...) || exit $$?; \
+		(cd $$mod && go tool golangci-lint run ./...) || exit $$?; \
 	done
 
 .PHONY: go-format

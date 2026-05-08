@@ -130,6 +130,7 @@ services/oidc/                 github.com/sha1n/testrig/services/oidc
 services/postgres/             github.com/sha1n/testrig/services/postgres
 services/wiremock/             github.com/sha1n/testrig/services/wiremock
 examples/                      github.com/sha1n/testrig/examples   (not published)
+tools/                         github.com/sha1n/testrig/tools      (not published; pins golangci-lint)
 go.work                        ties all of the above together for local development
 ```
 
@@ -163,8 +164,13 @@ inert for consumers and keeps local development working.
 ```
 make check           # format + lint + test across every module (default)
 make test            # tests only (every module)
+make lint            # go vet + golangci-lint across every module; fails on issues
 make build-examples  # build example binaries into bin/
-make go-get          # tidy every module
+make go-get          # workspace sync across every module
 ```
+
+`make lint` invokes `golangci-lint` via Go's `tool` directive — the version is
+pinned in `tools/go.mod`, so contributors don't need to install it separately
+and CI runs the same version.
 
 Requires Go 1.25 or later. Tests require Docker (testcontainers).

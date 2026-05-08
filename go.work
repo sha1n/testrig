@@ -6,4 +6,5 @@ use (
 	./services/oidc
 	./services/postgres
 	./services/wiremock
+	./tools
 )

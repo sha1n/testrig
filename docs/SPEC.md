@@ -19,6 +19,7 @@ The repository is a Go multi-module workspace. Each pre-built service is publish
 | Postgres service | `github.com/sha1n/testrig/services/postgres` | `services/postgres/` |
 | WireMock service | `github.com/sha1n/testrig/services/wiremock` | `services/wiremock/` |
 | Examples | `github.com/sha1n/testrig/examples` | not published |
+| Dev tools | `github.com/sha1n/testrig/tools` | not published — pins `golangci-lint` via Go's `tool` directive |
 
 - Go version: `1.25`
 - License: TBD (added separately)
@@ -39,6 +40,7 @@ examples/                 — single Go module with runnable integration example
   ├── internal/seed       — schema-seed testrig.Service used by both example apps
   ├── viper-app/          — Viper config-injection example
   └── koanf-app/          — koanf config-injection example
+tools/                    — dev-tools module; pins `golangci-lint` via Go 1.24+ `tool` directive
 docs/                     — specs and plans
 ```
 

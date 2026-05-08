@@ -10,6 +10,47 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - .
+          - services/oidc
+          - services/postgres
+          - services/wiremock
+          - examples
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            services/oidc/go.sum
+            services/postgres/go.sum
+            services/wiremock/go.sum
+            examples/go.sum
+            tools/go.sum
+
+      - name: Download tool dependencies
+        working-directory: tools
+        run: go mod download
+
+      - name: Vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+      - name: golangci-lint
+        working-directory: ${{ matrix.module }}
+        run: go tool golangci-lint run ./...
+
   build-test:
     name: Build & Test
     runs-on: ubuntu-latest
