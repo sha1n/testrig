@@ -21,7 +21,6 @@ package oidc
 import (
 	"context"
 	"crypto/rsa"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -291,10 +290,8 @@ func (i *Issuer) PublicKey() *rsa.PublicKey {
 // and `iat` when absent in claims; never overrides caller-supplied values
 // (so negative-test scenarios can mint tokens with wrong iss). The `kid`
 // header is always set. Returns an error if called before Start.
-//
-// Implemented by sign.go in Task 6.
 func (i *Issuer) Sign(claims jwt.MapClaims) (string, error) {
-	return "", errors.New("oidc: Sign not yet implemented")
+	return i.sign(claims)
 }
 
 // SignFor is a convenience wrapper that signs a token with a specific
@@ -302,8 +299,6 @@ func (i *Issuer) Sign(claims jwt.MapClaims) (string, error) {
 // empty audience, or non-positive ttl all return an error. Note that the
 // audience here is NOT validated against AllowedAudiences — this is the
 // test-side mint helper, intentionally permissive for negative test cases.
-//
-// Implemented by sign.go in Task 6.
 func (i *Issuer) SignFor(subject, audience string, ttl time.Duration) (string, error) {
-	return "", errors.New("oidc: SignFor not yet implemented")
+	return i.signFor(subject, audience, ttl)
 }
