@@ -60,6 +60,12 @@ func TestRefreshToken_Exchange_ReturnsNewAccessToken(t *testing.T) {
 	if resp.AccessToken == first.AccessToken {
 		t.Errorf("expected fresh access_token, got the same one")
 	}
+	if resp.RefreshToken == "" {
+		t.Errorf("no refresh_token in refresh response (rotation should produce a new one)")
+	}
+	if resp.RefreshToken == first.RefreshToken {
+		t.Errorf("refresh_token was not rotated (got same as original)")
+	}
 	parsed, _, _ := jwt.NewParser().ParseUnverified(resp.AccessToken, jwt.MapClaims{})
 	c := parsed.Claims.(jwt.MapClaims)
 	if c["sub"] != "test-user" {
@@ -90,10 +96,16 @@ func TestRefreshToken_Rotation_OldTokenRejected(t *testing.T) {
 	}
 }
 
-func TestRefreshToken_WrongClient_InvalidGrant(t *testing.T) {
+// TestRefreshToken_TamperedJTI_InvalidGrant fabricates a refresh-shaped JWT
+// with a synthetic jti not present in the store. consumeRefreshToken's lookup
+// fails (not_found) before reaching the client_id check. In a single-client
+// fixture the rec.clientID-mismatch branch is unreachable through the public
+// API; this test covers the upstream fabricated-token rejection path. A
+// genuine wrong-client scenario would require multi-client support.
+func TestRefreshToken_TamperedJTI_InvalidGrant(t *testing.T) {
 	iss := startMinimal(t)
-	// Fabricate a refresh-shaped JWT signed by the issuer but with client_id="other-client".
-	// The signature is valid, the audience matches, but the client_id claim is wrong.
+	// Fabricate a refresh-shaped JWT signed by the issuer but with a synthetic jti.
+	// The signature is valid, the audience matches, but the JTI is unknown.
 	tampered, err := iss.Sign(jwt.MapClaims{
 		"iss":       iss.IssuerURL(),
 		"sub":       "test-user",

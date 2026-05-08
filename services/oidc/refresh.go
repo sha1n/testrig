@@ -113,36 +113,19 @@ func (i *Issuer) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token "+reason)
 		return
 	}
+	// Single-client fixture: rec.clientID is always i.clientID since this
+	// issuer issued the original record. The check below is defensive and
+	// would matter in a multi-client extension; left in place to make the
+	// invariant explicit and to simplify a future multi-client refactor.
 	if rec.clientID != i.clientID {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token client_id mismatch")
 		return
 	}
 
-	jtiBuf := make([]byte, 16)
-	if _, err := rand.Read(jtiBuf); err != nil {
-		writeOAuthError(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
-	}
 	now := time.Now()
 	exp := now.Add(i.tokenTTL)
-	accessClaims := jwt.MapClaims{
-		"iss": i.IssuerURL(),
-		"sub": rec.subject,
-		"aud": rec.audience,
-		"iat": now.Unix(),
-		"exp": exp.Unix(),
-		"jti": hex.EncodeToString(jtiBuf),
-	}
-	if rec.scope != "" {
-		accessClaims["scope"] = rec.scope
-	}
-	accessTok, err := i.signClaims(accessClaims)
-	if err != nil {
-		writeOAuthError(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
-	}
 
-	// Rotate: issue a fresh refresh token.
+	// Rotate: issue a fresh refresh token regardless of grant shape.
 	newRefresh, err := i.issueRefreshToken(&refreshRecord{
 		subject:  rec.subject,
 		audience: rec.audience,
@@ -155,7 +138,6 @@ func (i *Issuer) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"access_token":  accessTok,
 		"refresh_token": newRefresh,
 		"token_type":    "Bearer",
 		"expires_in":    i.expiresIn(),
@@ -163,6 +145,36 @@ func (i *Issuer) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 	if rec.scope != "" {
 		resp["scope"] = rec.scope
 	}
+
+	// Mirror handleAuthCodeGrant: only mint an access token if the original
+	// flow registered an audience. An id-token-only flow that requested
+	// offline_access still rotates its refresh token but produces no access
+	// token, matching the original grant's contract.
+	if rec.audience != "" {
+		jtiBuf := make([]byte, 16)
+		if _, err := rand.Read(jtiBuf); err != nil {
+			writeOAuthError(w, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
+		accessClaims := jwt.MapClaims{
+			"iss": i.IssuerURL(),
+			"sub": rec.subject,
+			"aud": rec.audience,
+			"iat": now.Unix(),
+			"exp": exp.Unix(),
+			"jti": hex.EncodeToString(jtiBuf),
+		}
+		if rec.scope != "" {
+			accessClaims["scope"] = rec.scope
+		}
+		accessTok, err := i.signClaims(accessClaims)
+		if err != nil {
+			writeOAuthError(w, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
+		resp["access_token"] = accessTok
+	}
+
 	writeTokenResponse(w, resp)
 }
 
