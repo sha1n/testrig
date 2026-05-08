@@ -25,6 +25,9 @@ func (i *Issuer) startServer(ctx context.Context) error {
 	}
 	i.privKey = priv
 	i.codeStore = newCodeStore(i.codeTTL)
+	if i.userClaims == nil {
+		i.userClaims = make(map[string]map[string]any)
+	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -61,6 +64,7 @@ func (i *Issuer) stopServer(ctx context.Context) error {
 	i.baseURL = ""
 	i.privKey = nil
 	i.codeStore = nil
+	i.userClaims = nil
 	return srv.Shutdown(ctx)
 }
 
@@ -72,6 +76,7 @@ func (i *Issuer) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /authorize", i.handleAuthorize)
 	mux.HandleFunc("POST /authorize", i.handleAuthorize)
 	mux.HandleFunc("POST /token", i.handleToken)
+	mux.HandleFunc("GET /userinfo", i.handleUserinfo)
 }
 
 // generateRandomHex returns n random bytes as a lowercase hex string.

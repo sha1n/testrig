@@ -10,6 +10,7 @@ type discoveryDoc struct {
 	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
 	TokenEndpoint                     string   `json:"token_endpoint"`
 	JWKSURI                           string   `json:"jwks_uri"`
+	UserinfoEndpoint                  string   `json:"userinfo_endpoint"`
 	ResponseTypesSupported            []string `json:"response_types_supported"`
 	GrantTypesSupported               []string `json:"grant_types_supported"`
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported"`
@@ -26,6 +27,7 @@ func (i *Issuer) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		AuthorizationEndpoint:             i.AuthorizationURL(),
 		TokenEndpoint:                     i.TokenURL(),
 		JWKSURI:                           i.JWKSURL(),
+		UserinfoEndpoint:                  i.UserinfoURL(),
 		ResponseTypesSupported:            []string{"code"},
 		GrantTypesSupported:               []string{"authorization_code", "client_credentials"},
 		IDTokenSigningAlgValuesSupported:  []string{"RS256"},

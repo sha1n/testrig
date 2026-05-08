@@ -66,13 +66,14 @@ type Issuer struct {
 	propAudience     string
 
 	// Runtime state (populated during Start, cleared by Stop).
-	mu        sync.Mutex
-	logger    *slog.Logger
-	server    *http.Server
-	listener  net.Listener
-	baseURL   string
-	privKey   *rsa.PrivateKey
-	codeStore *codeStore
+	mu         sync.Mutex
+	logger     *slog.Logger
+	server     *http.Server
+	listener   net.Listener
+	baseURL    string
+	privKey    *rsa.PrivateKey
+	codeStore  *codeStore
+	userClaims map[string]map[string]any
 }
 
 // New creates an Issuer with default configuration (random KeyID/ClientID/
@@ -136,6 +137,20 @@ func (i *Issuer) WithTokenTTL(ttl time.Duration) *Issuer {
 func (i *Issuer) WithCodeTTL(ttl time.Duration) *Issuer {
 	i.codeTTL = ttl
 	i.codeTTLExplicit = true
+	return i
+}
+
+// WithUserClaim adds a custom claim returned by /userinfo for the given
+// subject. Multiple calls with the same subject merge keys (last write wins
+// per key). Reset by Stop. Useful for tests that need richer profiles.
+func (i *Issuer) WithUserClaim(subject, key string, value any) *Issuer {
+	if i.userClaims == nil {
+		i.userClaims = make(map[string]map[string]any)
+	}
+	if _, ok := i.userClaims[subject]; !ok {
+		i.userClaims[subject] = make(map[string]any)
+	}
+	i.userClaims[subject][key] = value
 	return i
 }
 
@@ -293,6 +308,14 @@ func (i *Issuer) DiscoveryURL() string {
 		return ""
 	}
 	return i.baseURL + "/.well-known/openid-configuration"
+}
+
+// UserinfoURL returns the /userinfo endpoint URL. Empty before Start.
+func (i *Issuer) UserinfoURL() string {
+	if i.baseURL == "" {
+		return ""
+	}
+	return i.baseURL + "/userinfo"
 }
 
 // ClientID returns the registered client_id. Empty until configured or Start.

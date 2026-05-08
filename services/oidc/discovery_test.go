@@ -21,6 +21,7 @@ type discoveryDoc struct {
 	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
 	TokenEndpoint                     string   `json:"token_endpoint"`
 	JWKSURI                           string   `json:"jwks_uri"`
+	UserinfoEndpoint                  string   `json:"userinfo_endpoint"`
 	ResponseTypesSupported            []string `json:"response_types_supported"`
 	GrantTypesSupported               []string `json:"grant_types_supported"`
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported"`
@@ -62,6 +63,9 @@ func TestDiscovery_FieldsMatchAccessors(t *testing.T) {
 	if d.JWKSURI != iss.JWKSURL() {
 		t.Errorf("jwks_uri = %q, want %q", d.JWKSURI, iss.JWKSURL())
 	}
+	if d.UserinfoEndpoint != iss.UserinfoURL() {
+		t.Errorf("userinfo_endpoint = %q, want %q", d.UserinfoEndpoint, iss.UserinfoURL())
+	}
 }
 
 func TestDiscovery_AdvertisedAlgsAndGrants(t *testing.T) {
@@ -82,9 +86,9 @@ func TestDiscovery_AdvertisedAlgsAndGrants(t *testing.T) {
 func TestDiscovery_NoFalseAdvertising(t *testing.T) {
 	iss := startMinimal(t)
 	_, _, body := httpGet(t, iss.DiscoveryURL())
-	// We deliberately do not advertise userinfo_endpoint, claims_supported,
+	// We deliberately do not advertise claims_supported,
 	// scopes_supported, etc. since the implementation does not enforce them.
-	for _, banned := range []string{`"userinfo_endpoint"`, `"claims_supported"`, `"scopes_supported"`, `"introspection_endpoint"`, `"revocation_endpoint"`} {
+	for _, banned := range []string{`"claims_supported"`, `"scopes_supported"`, `"introspection_endpoint"`, `"revocation_endpoint"`} {
 		if strings.Contains(body, banned) {
 			t.Errorf("discovery doc must not advertise %s; body: %s", banned, body)
 		}
