@@ -146,8 +146,8 @@ func TestAuthorize_MissingResponseType_Redirects_InvalidRequest(t *testing.T) {
 		t.Errorf("status = %d, want 302", status)
 	}
 	loc, _ := url.Parse(headers.Get("Location"))
-	if loc.Query().Get("error") == "" {
-		t.Errorf("expected ?error=... in Location")
+	if loc.Query().Get("error") != "invalid_request" {
+		t.Errorf("error = %q, want invalid_request", loc.Query().Get("error"))
 	}
 	if loc.Query().Get("state") != "S" {
 		t.Errorf("state not echoed; got %q", loc.Query().Get("state"))
@@ -160,6 +160,7 @@ func TestAuthorize_UnsupportedResponseType_Redirects_UnsupportedResponseType(t *
 		"client_id":     {iss.ClientID()},
 		"redirect_uri":  {"http://localhost:8080/callback"},
 		"response_type": {"token"},
+		"state":         {"S2"},
 	}
 	status, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
 	if status != http.StatusFound {
@@ -168,6 +169,9 @@ func TestAuthorize_UnsupportedResponseType_Redirects_UnsupportedResponseType(t *
 	loc, _ := url.Parse(headers.Get("Location"))
 	if loc.Query().Get("error") != "unsupported_response_type" {
 		t.Errorf("error = %q, want unsupported_response_type", loc.Query().Get("error"))
+	}
+	if loc.Query().Get("state") != "S2" {
+		t.Errorf("state not echoed; got %q", loc.Query().Get("state"))
 	}
 }
 

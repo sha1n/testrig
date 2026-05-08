@@ -6,9 +6,10 @@ import (
 	"slices"
 )
 
-// handleAuthorize implements GET /authorize. This task implements only the
-// happy paths and the redirect-uri / client_id pre-validation that yields
-// HTTP 400 (no redirect). Other error responses come in Task 9.
+// handleAuthorize implements GET /authorize. Bad client_id or redirect_uri
+// produces HTTP 400 with no redirect (preventing open-redirect leaks).
+// All other validation failures 302-redirect to the registered redirect_uri
+// with RFC 6749 §5.2 error params.
 func (i *Issuer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
