@@ -752,9 +752,12 @@ func TestPKCE_VerifierTooShort_InvalidRequest(t *testing.T) {
 		"code_verifier": {strings.Repeat("a", 42)},
 	}
 	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
-	status, _, _ := httpPostForm(t, iss.TokenURL(), form, basic)
+	status, _, body := httpPostForm(t, iss.TokenURL(), form, basic)
 	if status != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", status)
+	}
+	if e, _ := parseOAuthError(t, body); e != "invalid_request" {
+		t.Errorf("error = %q, want invalid_request", e)
 	}
 }
 
@@ -780,8 +783,11 @@ func TestPKCE_VerifierTooLong_InvalidRequest(t *testing.T) {
 		"code_verifier": {strings.Repeat("a", 129)},
 	}
 	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
-	status, _, _ := httpPostForm(t, iss.TokenURL(), form, basic)
+	status, _, body := httpPostForm(t, iss.TokenURL(), form, basic)
 	if status != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", status)
+	}
+	if e, _ := parseOAuthError(t, body); e != "invalid_request" {
+		t.Errorf("error = %q, want invalid_request", e)
 	}
 }

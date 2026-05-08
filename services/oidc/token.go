@@ -2,6 +2,7 @@ package oidc
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -125,9 +126,9 @@ func (i *Issuer) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		verifier := r.PostForm.Get("code_verifier")
 		if err := validatePKCEVerifier(verifier, rec.codeChallenge); err != nil {
 			oauthErr := "invalid_grant"
-			if err.Error() == "code_verifier is required" ||
-				err.Error() == "code_verifier length out of range (43-128)" ||
-				err.Error() == "code_verifier contains invalid characters" {
+			if errors.Is(err, errPKCEMissing) ||
+				errors.Is(err, errPKCELength) ||
+				errors.Is(err, errPKCEBadCharacter) {
 				oauthErr = "invalid_request"
 			}
 			writeOAuthError(w, http.StatusBadRequest, oauthErr, err.Error())
@@ -189,24 +190,37 @@ func (i *Issuer) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 	writeTokenResponse(w, resp)
 }
 
+// PKCE verifier validation errors. Sentinels so callers can branch on them
+// via errors.Is rather than fragile string comparison.
+var (
+	errPKCEMissing      = errors.New("code_verifier is required")
+	errPKCELength       = errors.New("code_verifier length out of range (43-128)")
+	errPKCEBadCharacter = errors.New("code_verifier contains invalid characters")
+	errPKCEMismatch     = errors.New("code_verifier mismatch")
+)
+
 // validatePKCEVerifier checks the verifier against the stored challenge per
-// RFC 7636 §4. Returns nil on match.
+// RFC 7636 §4. Returns nil on match, or one of the sentinel errors above.
 func validatePKCEVerifier(verifier, challenge string) error {
 	if verifier == "" {
-		return errors.New("code_verifier is required")
+		return errPKCEMissing
 	}
 	if len(verifier) < 43 || len(verifier) > 128 {
-		return errors.New("code_verifier length out of range (43-128)")
+		return errPKCELength
 	}
 	for _, r := range verifier {
 		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
 			r == '-' || r == '.' || r == '_' || r == '~') {
-			return errors.New("code_verifier contains invalid characters")
+			return errPKCEBadCharacter
 		}
 	}
 	h := sha256.Sum256([]byte(verifier))
-	if base64.RawURLEncoding.EncodeToString(h[:]) != challenge {
-		return errors.New("code_verifier mismatch")
+	// Constant-time compare to avoid leaking match-length via response timing.
+	if subtle.ConstantTimeCompare(
+		[]byte(base64.RawURLEncoding.EncodeToString(h[:])),
+		[]byte(challenge),
+	) != 1 {
+		return errPKCEMismatch
 	}
 	return nil
 }
