@@ -125,8 +125,11 @@ func TestUserinfo_ExpiredToken_401_InvalidToken(t *testing.T) {
 func TestUserinfo_WrongAudience_401_InvalidToken(t *testing.T) {
 	iss := startMinimal(t)
 	tok, _ := iss.SignFor("alice", "wrong-api", time.Minute)
-	status, _, _ := bearerHeader(t, iss.UserinfoURL(), tok)
+	status, headers, _ := bearerHeader(t, iss.UserinfoURL(), tok)
 	if status != http.StatusUnauthorized {
 		t.Errorf("status = %d", status)
+	}
+	if !strings.Contains(headers.Get("WWW-Authenticate"), `error="invalid_token"`) {
+		t.Errorf("WWW-Authenticate = %q", headers.Get("WWW-Authenticate"))
 	}
 }
