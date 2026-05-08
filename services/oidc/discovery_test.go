@@ -165,6 +165,9 @@ func TestJWKS_KIDMatchesConfig(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &d); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+	if len(d.Keys) == 0 {
+		t.Fatalf("no keys in JWKS")
+	}
 	if d.Keys[0].Kid != "custom-kid-1" {
 		t.Errorf("kid = %q, want custom-kid-1", d.Keys[0].Kid)
 	}
