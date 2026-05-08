@@ -170,8 +170,11 @@ func (i *Issuer) Start(ctx context.Context, logger *slog.Logger) (testrig.Proper
 	if i.server != nil {
 		return nil, fmt.Errorf("oidc: issuer %q already started", i.name)
 	}
+	if err := i.validate(); err != nil {
+		return nil, err
+	}
 
-	// Apply defaults for unset fields. Real validation happens in Task 3.
+	// Apply defaults for unset fields.
 	if !i.keyIDExplicit && i.keyID == "" {
 		v, err := generateRandomHex(16)
 		if err != nil {

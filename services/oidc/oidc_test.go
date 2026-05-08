@@ -96,3 +96,138 @@ func TestStop_Twice_NoOp(t *testing.T) {
 		t.Errorf("second Stop should be no-op, got %v", err)
 	}
 }
+
+// validationCase exercises one validation rule: it constructs an Issuer,
+// applies an offending With* setter, calls Start, and asserts the returned
+// error contains a stable substring.
+type validationCase struct {
+	apply   func(*oidc.Issuer)
+	wantSub string
+}
+
+func runValidationCase(t *testing.T, tc validationCase) {
+	t.Helper()
+	iss := oidc.New("idp")
+	tc.apply(iss)
+	_, err := iss.Start(context.Background(), slog.Default())
+	if err == nil {
+		t.Fatalf("expected error containing %q, got nil", tc.wantSub)
+	}
+	if !strings.Contains(err.Error(), tc.wantSub) {
+		t.Errorf("error %q does not contain expected substring %q", err.Error(), tc.wantSub)
+	}
+	// Don't Stop — Start failed, nothing to clean up.
+}
+
+func TestStart_EmptyName_ReturnsError(t *testing.T) {
+	iss := oidc.New("")
+	_, err := iss.Start(context.Background(), slog.Default())
+	if err == nil || !strings.Contains(err.Error(), "name must not be empty") {
+		t.Errorf("expected name-empty error, got %v", err)
+	}
+}
+
+func TestStart_EmptyKeyID_ReturnsError(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithKeyID("") },
+		wantSub: "key_id must not be empty",
+	})
+}
+
+func TestStart_EmptyClientID_ReturnsError(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithClientID("") },
+		wantSub: "client_id must not be empty",
+	})
+}
+
+func TestStart_EmptyClientSecret_ReturnsError(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithClientSecret("") },
+		wantSub: "client_secret must not be empty",
+	})
+}
+
+func TestStart_EmptyDefaultSubject_ReturnsError(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithDefaultSubject("") },
+		wantSub: "default_subject must not be empty",
+	})
+}
+
+func TestStart_ZeroTokenTTL_ReturnsError(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithTokenTTL(0) },
+		wantSub: "token_ttl must be > 0",
+	})
+}
+
+func TestStart_NegativeTokenTTL_ReturnsError(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithTokenTTL(-1 * time.Second) },
+		wantSub: "token_ttl must be > 0",
+	})
+}
+
+func TestStart_RedirectURI_EmptyEntry(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithRedirectURIs("") },
+		wantSub: "redirect_uri must not be empty",
+	})
+}
+
+func TestStart_RedirectURI_Unparsable(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithRedirectURIs("ht!tp://[::1]:bad") },
+		wantSub: "is not a valid URL",
+	})
+}
+
+func TestStart_RedirectURI_Relative(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithRedirectURIs("/callback") },
+		wantSub: "must be absolute",
+	})
+}
+
+func TestStart_RedirectURI_NonHTTPScheme(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithRedirectURIs("javascript:alert(1)") },
+		wantSub: "must use http or https scheme",
+	})
+}
+
+func TestStart_RedirectURI_HasFragment(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithRedirectURIs("http://localhost/cb#frag") },
+		wantSub: "must not contain fragment",
+	})
+}
+
+func TestStart_RedirectURI_HasQuery(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithRedirectURIs("http://localhost/cb?x=1") },
+		wantSub: "must not contain query string",
+	})
+}
+
+func TestStart_RedirectURI_Duplicate(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithRedirectURIs("http://localhost/cb", "http://localhost/cb") },
+		wantSub: "is duplicated",
+	})
+}
+
+func TestStart_AudienceEmptyEntry_ReturnsError(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithAllowedAudiences("api", "") },
+		wantSub: "audience must not be empty",
+	})
+}
+
+func TestStart_AudienceDuplicate_ReturnsError(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithAllowedAudiences("api", "api") },
+		wantSub: "is duplicated",
+	})
+}
