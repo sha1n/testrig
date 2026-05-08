@@ -306,9 +306,22 @@ func TestProperties_OverrideKeys_TakeEffect(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() { _ = iss.Stop(context.Background()) })
-	for _, k := range []string{"ISSUER", "JWKS", "DISCOVERY", "CLIENT_ID", "CLIENT_SECRET", "AUDIENCE"} {
-		if _, ok := props[k]; !ok {
+	expected := map[string]string{
+		"ISSUER":        iss.IssuerURL(),
+		"JWKS":          iss.JWKSURL(),
+		"DISCOVERY":     iss.DiscoveryURL(),
+		"CLIENT_ID":     iss.ClientID(),
+		"CLIENT_SECRET": iss.ClientSecret(),
+		"AUDIENCE":      iss.AllowedAudiences()[0],
+	}
+	for k, want := range expected {
+		got, ok := props[k]
+		if !ok {
 			t.Errorf("override key %q missing", k)
+			continue
+		}
+		if got != want {
+			t.Errorf("override key %q = %q, want %q", k, got, want)
 		}
 	}
 	// Confirm default-named keys are NOT present.
