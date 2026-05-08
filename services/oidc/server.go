@@ -67,6 +67,7 @@ func (i *Issuer) stopServer(ctx context.Context) error {
 // are added incrementally by Tasks 4, 5, 8, and 10.
 func (i *Issuer) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/openid-configuration", i.handleDiscovery)
+	mux.HandleFunc("GET /.well-known/jwks.json", i.handleJWKS)
 }
 
 // generateRandomHex returns n random bytes as a lowercase hex string.
