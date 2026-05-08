@@ -245,3 +245,76 @@ func TestStart_AudienceWhitespace_ReturnsError(t *testing.T) {
 		wantSub: "must not contain whitespace",
 	})
 }
+
+// Property tests do not use startMinimal because they need access to the
+// Properties map returned by Start (startMinimal discards it). They start
+// the Issuer directly and clean up via t.Cleanup.
+
+func TestProperties_DefaultKeys_AllPresent(t *testing.T) {
+	iss := oidc.New("idp").
+		WithRedirectURIs("http://localhost/cb").
+		WithAllowedAudiences("test-api")
+	props, err := iss.Start(context.Background(), slog.Default())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = iss.Stop(context.Background()) })
+	expected := map[string]string{
+		"idp.issuer":        iss.IssuerURL(),
+		"idp.jwks_url":      iss.JWKSURL(),
+		"idp.discovery_url": iss.DiscoveryURL(),
+		"idp.client_id":     iss.ClientID(),
+		"idp.client_secret": iss.ClientSecret(),
+		"idp.audience":      iss.AllowedAudiences()[0],
+	}
+	for k, want := range expected {
+		got, ok := props[k]
+		if !ok {
+			t.Errorf("property %q missing", k)
+			continue
+		}
+		if got != want {
+			t.Errorf("property %q = %q, want %q", k, got, want)
+		}
+	}
+}
+
+func TestProperties_AudienceProperty_EmptyWhenNoAllowedAudiences(t *testing.T) {
+	iss := oidc.New("idp").WithRedirectURIs("http://localhost/cb")
+	props, err := iss.Start(context.Background(), slog.Default())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = iss.Stop(context.Background()) })
+	if props["idp.audience"] != "" {
+		t.Errorf("idp.audience = %q, want empty", props["idp.audience"])
+	}
+}
+
+func TestProperties_OverrideKeys_TakeEffect(t *testing.T) {
+	iss := oidc.New("idp").
+		WithRedirectURIs("http://localhost/cb").
+		WithAllowedAudiences("test-api").
+		WithIssuerURLPropertyName("ISSUER").
+		WithJWKSURLPropertyName("JWKS").
+		WithDiscoveryURLPropertyName("DISCOVERY").
+		WithClientIDPropertyName("CLIENT_ID").
+		WithClientSecretPropertyName("CLIENT_SECRET").
+		WithAudiencePropertyName("AUDIENCE")
+	props, err := iss.Start(context.Background(), slog.Default())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = iss.Stop(context.Background()) })
+	for _, k := range []string{"ISSUER", "JWKS", "DISCOVERY", "CLIENT_ID", "CLIENT_SECRET", "AUDIENCE"} {
+		if _, ok := props[k]; !ok {
+			t.Errorf("override key %q missing", k)
+		}
+	}
+	// Confirm default-named keys are NOT present.
+	for _, k := range []string{"idp.issuer", "idp.jwks_url", "idp.discovery_url", "idp.client_id", "idp.client_secret", "idp.audience"} {
+		if _, ok := props[k]; ok {
+			t.Errorf("default key %q should be absent when override is set", k)
+		}
+	}
+}

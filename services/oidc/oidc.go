@@ -209,9 +209,31 @@ func (i *Issuer) Start(ctx context.Context, logger *slog.Logger) (testrig.Proper
 		return nil, err
 	}
 
-	// Properties wiring filled in by Task 7. For now return an empty map so
-	// Start doesn't return nil.
-	return testrig.Properties{}, nil
+	props := i.buildProperties()
+	return props, nil
+}
+
+// buildProperties returns the testrig.Properties published by Start.
+// Default keys "<name>.<suffix>" unless overridden via With*PropertyName.
+func (i *Issuer) buildProperties() testrig.Properties {
+	keyOr := func(override, suffix string) string {
+		if override != "" {
+			return override
+		}
+		return i.name + "." + suffix
+	}
+	audValue := ""
+	if len(i.allowedAudiences) > 0 {
+		audValue = i.allowedAudiences[0]
+	}
+	return testrig.Properties{
+		keyOr(i.propIssuer, "issuer"):              i.IssuerURL(),
+		keyOr(i.propJWKS, "jwks_url"):              i.JWKSURL(),
+		keyOr(i.propDiscovery, "discovery_url"):    i.DiscoveryURL(),
+		keyOr(i.propClientID, "client_id"):         i.clientID,
+		keyOr(i.propClientSecret, "client_secret"): i.clientSecret,
+		keyOr(i.propAudience, "audience"):          audValue,
+	}
 }
 
 // Stop implements testrig.Service. Idempotent.
