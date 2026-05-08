@@ -21,6 +21,7 @@ type codeRecord struct {
 	codeChallenge string
 	subject       string
 	expiresAt     time.Time
+	authTime      time.Time // when the user was "authenticated" (issuance time in this fixture)
 }
 
 // codeStore is a single-use, expiry-bounded code store. Safe for concurrent

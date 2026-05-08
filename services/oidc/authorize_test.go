@@ -210,3 +210,20 @@ func TestAuthorize_SubjectExtensionParam_OverridesDefault(t *testing.T) {
 		t.Errorf("expected code, got empty")
 	}
 }
+
+func TestAuthorize_POST_Succeeds(t *testing.T) {
+	iss := startMinimal(t)
+	form := url.Values{
+		"client_id":     {iss.ClientID()},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"response_type": {"code"},
+	}
+	status, headers, _ := httpPostForm(t, iss.AuthorizationURL(), form, nil)
+	if status != http.StatusFound {
+		t.Errorf("status = %d, want 302", status)
+	}
+	loc, _ := url.Parse(headers.Get("Location"))
+	if loc.Query().Get("code") == "" {
+		t.Errorf("missing code in redirect")
+	}
+}

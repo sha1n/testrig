@@ -33,6 +33,16 @@ func writeTokenResponse(w http.ResponseWriter, payload map[string]any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+// expiresIn returns the OAuth2 expires_in field value for the access/id token,
+// floored at 1 second so sub-second TTLs don't report 0.
+func (i *Issuer) expiresIn() int {
+	s := int(i.tokenTTL.Seconds())
+	if s < 1 {
+		return 1
+	}
+	return s
+}
+
 // authenticateClient enforces "exactly one of" Basic OR body, validates the
 // credentials match the registered client. Returns true on success.
 func (i *Issuer) authenticateClient(r *http.Request) (ok bool, errorCode, desc string, status int) {
@@ -112,14 +122,18 @@ func (i *Issuer) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 	exp := now.Add(i.tokenTTL)
 
 	idClaims := jwt.MapClaims{
-		"iss": i.IssuerURL(),
-		"sub": rec.subject,
-		"aud": i.clientID, // ID token aud is always client_id (OIDC standard)
-		"iat": now.Unix(),
-		"exp": exp.Unix(),
+		"iss":       i.IssuerURL(),
+		"sub":       rec.subject,
+		"aud":       i.clientID, // ID token aud is always client_id (OIDC standard)
+		"iat":       now.Unix(),
+		"exp":       exp.Unix(),
+		"auth_time": rec.authTime.Unix(),
 	}
 	if rec.nonce != "" {
 		idClaims["nonce"] = rec.nonce
+	}
+	if rec.audience != "" {
+		idClaims["azp"] = i.clientID
 	}
 	idTok, err := i.signClaims(idClaims)
 	if err != nil {
@@ -130,7 +144,10 @@ func (i *Issuer) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"id_token":   idTok,
 		"token_type": "Bearer",
-		"expires_in": int(i.tokenTTL.Seconds()),
+		"expires_in": i.expiresIn(),
+	}
+	if rec.scope != "" {
+		resp["scope"] = rec.scope
 	}
 
 	if rec.audience != "" {
@@ -175,7 +192,8 @@ func (i *Issuer) handleClientCredentialsGrant(w http.ResponseWriter, r *http.Req
 		"iat": now.Unix(),
 		"exp": exp.Unix(),
 	}
-	if scope := r.PostForm.Get("scope"); scope != "" {
+	scope := r.PostForm.Get("scope")
+	if scope != "" {
 		claims["scope"] = scope
 	}
 	tok, err := i.signClaims(claims)
@@ -183,9 +201,13 @@ func (i *Issuer) handleClientCredentialsGrant(w http.ResponseWriter, r *http.Req
 		writeOAuthError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeTokenResponse(w, map[string]any{
+	respCC := map[string]any{
 		"access_token": tok,
 		"token_type":   "Bearer",
-		"expires_in":   int(i.tokenTTL.Seconds()),
-	})
+		"expires_in":   i.expiresIn(),
+	}
+	if scope != "" {
+		respCC["scope"] = scope
+	}
+	writeTokenResponse(w, respCC)
 }

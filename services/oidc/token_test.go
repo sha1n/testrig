@@ -19,6 +19,7 @@ type tokenResponse struct {
 	AccessToken string `json:"access_token,omitempty"`
 	TokenType   string `json:"token_type,omitempty"`
 	ExpiresIn   int    `json:"expires_in,omitempty"`
+	Scope       string `json:"scope,omitempty"`
 }
 
 // runAuthCode performs a full /authorize → /token round-trip and returns the
@@ -519,5 +520,50 @@ func TestToken_ErrorBodyShape(t *testing.T) {
 	}
 	if e.Error == "" {
 		t.Errorf("error field empty")
+	}
+}
+
+func TestToken_IDToken_HasAuthTime(t *testing.T) {
+	iss := startMinimal(t)
+	before := time.Now().Unix()
+	resp := runAuthCode(t, iss, url.Values{"audience": {"test-api"}}, true)
+	after := time.Now().Unix()
+	parser := jwt.NewParser()
+	parsed, _, err := parser.ParseUnverified(resp.IDToken, jwt.MapClaims{})
+	if err != nil {
+		t.Fatalf("parse id_token: %v", err)
+	}
+	c := parsed.Claims.(jwt.MapClaims)
+	at, ok := c["auth_time"].(float64)
+	if !ok {
+		t.Fatalf("auth_time missing or wrong type: %v", c["auth_time"])
+	}
+	if int64(at) < before-1 || int64(at) > after+1 {
+		t.Errorf("auth_time = %d outside [%d, %d]", int64(at), before, after)
+	}
+}
+
+func TestToken_IDToken_HasAZP(t *testing.T) {
+	iss := startMinimal(t)
+	resp := runAuthCode(t, iss, url.Values{"audience": {"test-api"}}, true)
+	parser := jwt.NewParser()
+	parsed, _, err := parser.ParseUnverified(resp.IDToken, jwt.MapClaims{})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	c := parsed.Claims.(jwt.MapClaims)
+	if c["azp"] != iss.ClientID() {
+		t.Errorf("azp = %v, want client_id %v", c["azp"], iss.ClientID())
+	}
+}
+
+func TestToken_Response_IncludesScope(t *testing.T) {
+	iss := startMinimal(t)
+	resp := runAuthCode(t, iss, url.Values{
+		"audience": {"test-api"},
+		"scope":    {"read write"},
+	}, true)
+	if resp.Scope != "read write" {
+		t.Errorf("response scope = %q, want 'read write'", resp.Scope)
 	}
 }

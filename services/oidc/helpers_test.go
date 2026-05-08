@@ -47,9 +47,15 @@ func httpGet(t *testing.T, target string) (int, http.Header, string) {
 }
 
 // httpPostForm issues an HTTP POST with form-encoded body. Optional
-// Authorization header is set when basicAuth is non-nil.
+// Authorization header is set when basicAuth is non-nil. Redirects are not
+// followed so callers can observe 302 responses directly (e.g. POST /authorize).
 func httpPostForm(t *testing.T, target string, form url.Values, basicAuth *struct{ User, Pass string }) (int, http.Header, string) {
 	t.Helper()
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
 	if err != nil {
 		t.Fatalf("build POST request: %v", err)
@@ -58,7 +64,7 @@ func httpPostForm(t *testing.T, target string, form url.Values, basicAuth *struc
 	if basicAuth != nil {
 		req.SetBasicAuth(basicAuth.User, basicAuth.Pass)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", target, err)
 	}

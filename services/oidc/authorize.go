@@ -4,14 +4,24 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"time"
 )
 
-// handleAuthorize implements GET /authorize. Bad client_id or redirect_uri
-// produces HTTP 400 with no redirect (preventing open-redirect leaks).
-// All other validation failures 302-redirect to the registered redirect_uri
-// with RFC 6749 §5.2 error params.
+// handleAuthorize implements GET /authorize and POST /authorize. Bad client_id
+// or redirect_uri produces HTTP 400 with no redirect (preventing open-redirect
+// leaks). All other validation failures 302-redirect to the registered
+// redirect_uri with RFC 6749 §5.2 error params.
 func (i *Issuer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+	var q url.Values
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_request", "malformed request body")
+			return
+		}
+		q = r.PostForm
+	} else {
+		q = r.URL.Query()
+	}
 
 	clientID := q.Get("client_id")
 	redirectURI := q.Get("redirect_uri")
@@ -62,6 +72,7 @@ func (i *Issuer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		audience:      audience,
 		codeChallenge: q.Get("code_challenge"),
 		subject:       subject,
+		authTime:      time.Now(),
 	}
 	code, err := i.codeStore.issue(rec)
 	if err != nil {
