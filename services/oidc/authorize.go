@@ -25,8 +25,11 @@ func (i *Issuer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid_request: redirect_uri", http.StatusBadRequest)
 		return
 	}
-	// Beyond this point, errors come back as 302 to redirectURI. Task 9
-	// adds those branches; for now require response_type=code.
+	// Beyond this point, errors come back as 302 to redirectURI.
+	if responseType == "" {
+		i.redirectError(w, r, redirectURI, q.Get("state"), "invalid_request", "response_type is required")
+		return
+	}
 	if responseType != "code" {
 		i.redirectError(w, r, redirectURI, q.Get("state"), "unsupported_response_type", "response_type must be code")
 		return

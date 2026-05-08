@@ -1,6 +1,7 @@
 package oidc_test
 
 import (
+	"net/http"
 	"net/url"
 	"testing"
 
@@ -80,5 +81,124 @@ func TestAuthorize_MultipleCodes_AreUnique(t *testing.T) {
 	}
 	if c1 == "" || c2 == "" {
 		t.Errorf("empty codes: c1=%q c2=%q", c1, c2)
+	}
+}
+
+func TestAuthorize_MissingClientID_Returns400_NoRedirect(t *testing.T) {
+	iss := startMinimal(t)
+	q := url.Values{
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"response_type": {"code"},
+	}
+	status, _, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+func TestAuthorize_WrongClientID_Returns400_NoRedirect(t *testing.T) {
+	iss := startMinimal(t)
+	q := url.Values{
+		"client_id":     {"not-the-real-client"},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"response_type": {"code"},
+	}
+	status, _, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+func TestAuthorize_MissingRedirectURI_Returns400_NoRedirect(t *testing.T) {
+	iss := startMinimal(t)
+	q := url.Values{
+		"client_id":     {iss.ClientID()},
+		"response_type": {"code"},
+	}
+	status, _, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+func TestAuthorize_UnregisteredRedirectURI_Returns400_NoRedirect(t *testing.T) {
+	iss := startMinimal(t)
+	q := url.Values{
+		"client_id":     {iss.ClientID()},
+		"redirect_uri":  {"http://evil.example/cb"},
+		"response_type": {"code"},
+	}
+	status, _, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+func TestAuthorize_MissingResponseType_Redirects_InvalidRequest(t *testing.T) {
+	iss := startMinimal(t)
+	q := url.Values{
+		"client_id":    {iss.ClientID()},
+		"redirect_uri": {"http://localhost:8080/callback"},
+		"state":        {"S"},
+	}
+	status, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	if status != http.StatusFound {
+		t.Errorf("status = %d, want 302", status)
+	}
+	loc, _ := url.Parse(headers.Get("Location"))
+	if loc.Query().Get("error") == "" {
+		t.Errorf("expected ?error=... in Location")
+	}
+	if loc.Query().Get("state") != "S" {
+		t.Errorf("state not echoed; got %q", loc.Query().Get("state"))
+	}
+}
+
+func TestAuthorize_UnsupportedResponseType_Redirects_UnsupportedResponseType(t *testing.T) {
+	iss := startMinimal(t)
+	q := url.Values{
+		"client_id":     {iss.ClientID()},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"response_type": {"token"},
+	}
+	status, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	if status != http.StatusFound {
+		t.Errorf("status = %d, want 302", status)
+	}
+	loc, _ := url.Parse(headers.Get("Location"))
+	if loc.Query().Get("error") != "unsupported_response_type" {
+		t.Errorf("error = %q, want unsupported_response_type", loc.Query().Get("error"))
+	}
+}
+
+func TestAuthorize_DisallowedAudience_Redirects_InvalidRequest(t *testing.T) {
+	iss := startMinimal(t)
+	q := url.Values{
+		"client_id":     {iss.ClientID()},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"response_type": {"code"},
+		"audience":      {"not-allowed"},
+	}
+	status, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	if status != http.StatusFound {
+		t.Errorf("status = %d, want 302", status)
+	}
+	loc, _ := url.Parse(headers.Get("Location"))
+	if loc.Query().Get("error") != "invalid_request" {
+		t.Errorf("error = %q, want invalid_request", loc.Query().Get("error"))
+	}
+}
+
+func TestAuthorize_SubjectExtensionParam_OverridesDefault(t *testing.T) {
+	iss := startMinimal(t)
+	loc := authorizeHappy(t, iss, url.Values{
+		"sub":      {"bob"},
+		"audience": {"test-api"},
+	})
+	code := loc.Query().Get("code")
+	// Verifying the resulting token's sub requires /token (Task 10).
+	// For Task 9, just verify the request succeeded.
+	if code == "" {
+		t.Errorf("expected code, got empty")
 	}
 }
