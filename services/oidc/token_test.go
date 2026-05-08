@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -382,6 +383,43 @@ func TestToken_AuthCode_ReplayedCode_InvalidGrant(t *testing.T) {
 func TestToken_AuthCode_ExpiredCode_InvalidGrant(t *testing.T) {
 	t.Skip("requires injecting time mock or shortening codeTTL — covered indirectly by the consume() reason path; deferred to a future enhancement")
 	_ = time.Second
+}
+
+func TestToken_ParallelExchanges_NoStateCorruption(t *testing.T) {
+	iss := startMinimal(t)
+	const n = 20
+	var wg sync.WaitGroup
+	wg.Add(n)
+	results := make([]tokenResponse, n)
+	subjects := make([]string, n)
+	for k := 0; k < n; k++ {
+		k := k
+		subjects[k] = "user-" + string(rune('a'+k%26)) + string(rune('0'+k/26))
+		go func() {
+			defer wg.Done()
+			results[k] = runAuthCode(t, iss, url.Values{
+				"audience": {"test-api"},
+				"sub":      {subjects[k]},
+			}, true)
+		}()
+	}
+	wg.Wait()
+	parser := jwt.NewParser()
+	for k, r := range results {
+		if r.IDToken == "" || r.AccessToken == "" {
+			t.Errorf("k=%d missing tokens", k)
+			continue
+		}
+		parsed, _, err := parser.ParseUnverified(r.IDToken, jwt.MapClaims{})
+		if err != nil {
+			t.Errorf("k=%d parse: %v", k, err)
+			continue
+		}
+		c := parsed.Claims.(jwt.MapClaims)
+		if c["sub"] != subjects[k] {
+			t.Errorf("k=%d sub=%v want %s", k, c["sub"], subjects[k])
+		}
+	}
 }
 
 func TestToken_AuthCode_RedirectURIMismatch_InvalidGrant(t *testing.T) {
