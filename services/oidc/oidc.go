@@ -22,6 +22,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -161,13 +162,69 @@ func (i *Issuer) WithAudiencePropertyName(k string) *Issuer { i.propAudience = k
 // Name implements testrig.Service.
 func (i *Issuer) Name() string { return i.name }
 
-// Start implements testrig.Service. Stub for now; filled in by Task 2.
+// Start implements testrig.Service.
 func (i *Issuer) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
-	return nil, errors.New("oidc: Start not yet implemented")
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	if i.server != nil {
+		return nil, fmt.Errorf("oidc: issuer %q already started", i.name)
+	}
+
+	// Apply defaults for unset fields. Real validation happens in Task 3.
+	if !i.keyIDExplicit && i.keyID == "" {
+		v, err := generateRandomHex(16)
+		if err != nil {
+			return nil, err
+		}
+		i.keyID = v
+	}
+	if !i.clientIDExplicit && i.clientID == "" {
+		v, err := generateRandomHex(32)
+		if err != nil {
+			return nil, err
+		}
+		i.clientID = v
+	}
+	if !i.clientSecretExplicit && i.clientSecret == "" {
+		v, err := generateRandomHex(32)
+		if err != nil {
+			return nil, err
+		}
+		i.clientSecret = v
+	}
+	if !i.defaultSubjectExplicit && i.defaultSubject == "" {
+		i.defaultSubject = "test-user"
+	}
+	if !i.tokenTTLExplicit && i.tokenTTL == 0 {
+		i.tokenTTL = 1 * time.Hour
+	}
+
+	i.logger = logger
+	i.logger.Info("🎬 Starting OIDC issuer service", "name", i.name)
+
+	if err := i.startServer(ctx); err != nil {
+		return nil, err
+	}
+
+	// Properties wiring filled in by Task 7. For now return an empty map so
+	// Start doesn't return nil.
+	return testrig.Properties{}, nil
 }
 
-// Stop implements testrig.Service. Stub for now; filled in by Task 2.
-func (i *Issuer) Stop(ctx context.Context) error { return nil }
+// Stop implements testrig.Service. Idempotent.
+func (i *Issuer) Stop(ctx context.Context) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	if i.server == nil {
+		return nil
+	}
+	if i.logger != nil {
+		i.logger.Info("🛑 Stopping OIDC issuer service", "name", i.name)
+	}
+	return i.stopServer(ctx)
+}
 
 // Typed accessors. URL accessors return "" before Start.
 
