@@ -6,13 +6,13 @@ A testcontainers-backed PostgreSQL service for integration tests.
 
 ## Install
 
-This is a separate Go module. Add it explicitly when you need it:
+This is a separate Go module. Pin to the current prototype tag while the API iterates:
 
 ```
-go get github.com/sha1n/testrig/services/postgres
+go get github.com/sha1n/testrig/services/postgres@v0.0.0-prototype.1
 ```
 
-It transitively pulls in `github.com/sha1n/testrig` and the testcontainers / pgx stack.
+It transitively pulls in `github.com/sha1n/testrig` and the testcontainers / pgx stack. See the top-level README for guidance on `@latest` vs. explicit pinning.
 
 ## Quickstart
 

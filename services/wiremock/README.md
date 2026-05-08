@@ -11,13 +11,13 @@ loader without any bridging code.
 
 ## Install
 
-This is a separate Go module. Add it explicitly when you need it:
+This is a separate Go module. Pin to the current prototype tag while the API iterates:
 
 ```
-go get github.com/sha1n/testrig/services/wiremock
+go get github.com/sha1n/testrig/services/wiremock@v0.0.0-prototype.1
 ```
 
-It transitively pulls in `github.com/sha1n/testrig`, the testcontainers stack, and `github.com/wiremock/go-wiremock`.
+It transitively pulls in `github.com/sha1n/testrig`, the testcontainers stack, and `github.com/wiremock/go-wiremock`. See the top-level README for guidance on `@latest` vs. explicit pinning.
 
 ## Quickstart
 

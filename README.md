@@ -9,6 +9,32 @@ and tearing it down.
 
 > **Status:** pre-1.0, API not yet stable. Module path: `github.com/sha1n/testrig`.
 
+## Install
+
+The engine and each pre-built service are independently versioned Go modules.
+Add only what you need:
+
+```sh
+# Engine — required. Stdlib + golang.org/x/sync only.
+go get github.com/sha1n/testrig@v0.0.0-prototype.1
+
+# Pre-built services (each pulls its own deps; pick what you use):
+go get github.com/sha1n/testrig/services/postgres@v0.0.0-prototype.1
+go get github.com/sha1n/testrig/services/wiremock@v0.0.0-prototype.1
+go get github.com/sha1n/testrig/services/oidc@v0.0.0-prototype.1
+```
+
+While the API is still iterating, the only published tags are
+`v0.0.0-prototype.*` prereleases. **Pin explicitly** rather than using
+`@latest`: today `@latest` resolves to the highest prerelease, but the
+moment a non-prerelease tag (e.g. `v0.1.0`) is published, `@latest`
+will silently switch to it and skip all prereleases — possibly across
+breaking changes while pre-1.0.
+
+The `examples/` and `tools/` modules are repository-internal (demo apps and
+the pinned `golangci-lint` for `make lint` respectively); they are not
+intended to be imported by external projects and have no published tags.
+
 ## Why
 
 Tests that need a real Postgres, a stubbed HTTP backend, or a handful of
