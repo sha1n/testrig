@@ -1,7 +1,11 @@
 package oidc_test
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -414,8 +418,40 @@ func TestToken_AuthCode_ReplayedCode_InvalidGrant(t *testing.T) {
 }
 
 func TestToken_AuthCode_ExpiredCode_InvalidGrant(t *testing.T) {
-	t.Skip("requires injecting time mock or shortening codeTTL — the 'expired' reason path in codeStore.consume is structurally identical to the 'not_found' / 'redirect_uri_mismatch' paths that ARE tested; deferred to a future enhancement")
-	_ = time.Second
+	iss := oidc.New("idp").
+		WithRedirectURIs("http://localhost:8080/callback").
+		WithAllowedAudiences("test-api").
+		WithCodeTTL(50 * time.Millisecond)
+	if _, err := iss.Start(context.Background(), slog.Default()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = iss.Stop(context.Background()) })
+
+	q := url.Values{
+		"client_id":     {iss.ClientID()},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"response_type": {"code"},
+		"audience":      {"test-api"},
+	}
+	_, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	loc, _ := url.Parse(headers.Get("Location"))
+	code := loc.Query().Get("code")
+
+	time.Sleep(100 * time.Millisecond)
+
+	form := url.Values{
+		"grant_type":   {"authorization_code"},
+		"code":         {code},
+		"redirect_uri": {"http://localhost:8080/callback"},
+	}
+	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
+	status, _, body := httpPostForm(t, iss.TokenURL(), form, basic)
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+	if e, _ := parseOAuthError(t, body); e != "invalid_grant" {
+		t.Errorf("error = %q, want invalid_grant", e)
+	}
 }
 
 // TestToken_AuthCode_RedirectURIMismatch_Retry_Succeeds proves that a
@@ -597,5 +633,155 @@ func TestToken_Response_IncludesScope(t *testing.T) {
 	}, true)
 	if resp.Scope != "read write" {
 		t.Errorf("response scope = %q, want 'read write'", resp.Scope)
+	}
+}
+
+func pkceChallenge(verifier string) string {
+	h := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(h[:])
+}
+
+func TestPKCE_S256_VerifierMatches_Succeeds(t *testing.T) {
+	iss := startMinimal(t)
+	verifier := strings.Repeat("a", 64)
+	q := url.Values{
+		"client_id":             {iss.ClientID()},
+		"redirect_uri":          {"http://localhost:8080/callback"},
+		"response_type":         {"code"},
+		"audience":              {"test-api"},
+		"code_challenge":        {pkceChallenge(verifier)},
+		"code_challenge_method": {"S256"},
+	}
+	_, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	loc, _ := url.Parse(headers.Get("Location"))
+	code := loc.Query().Get("code")
+
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"code_verifier": {verifier},
+	}
+	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
+	status, _, body := httpPostForm(t, iss.TokenURL(), form, basic)
+	if status != 200 {
+		t.Fatalf("status = %d body = %s, want 200", status, body)
+	}
+}
+
+func TestPKCE_S256_VerifierMismatches_InvalidGrant(t *testing.T) {
+	iss := startMinimal(t)
+	verifier := strings.Repeat("a", 64)
+	q := url.Values{
+		"client_id":             {iss.ClientID()},
+		"redirect_uri":          {"http://localhost:8080/callback"},
+		"response_type":         {"code"},
+		"audience":              {"test-api"},
+		"code_challenge":        {pkceChallenge(verifier)},
+		"code_challenge_method": {"S256"},
+	}
+	_, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	loc, _ := url.Parse(headers.Get("Location"))
+	code := loc.Query().Get("code")
+
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"code_verifier": {strings.Repeat("b", 64)},
+	}
+	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
+	status, _, body := httpPostForm(t, iss.TokenURL(), form, basic)
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+	if e, _ := parseOAuthError(t, body); e != "invalid_grant" {
+		t.Errorf("error = %q, want invalid_grant", e)
+	}
+}
+
+func TestPKCE_VerifierMissing_InvalidRequest(t *testing.T) {
+	iss := startMinimal(t)
+	verifier := strings.Repeat("a", 64)
+	q := url.Values{
+		"client_id":             {iss.ClientID()},
+		"redirect_uri":          {"http://localhost:8080/callback"},
+		"response_type":         {"code"},
+		"audience":              {"test-api"},
+		"code_challenge":        {pkceChallenge(verifier)},
+		"code_challenge_method": {"S256"},
+	}
+	_, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	loc, _ := url.Parse(headers.Get("Location"))
+	code := loc.Query().Get("code")
+
+	form := url.Values{
+		"grant_type":   {"authorization_code"},
+		"code":         {code},
+		"redirect_uri": {"http://localhost:8080/callback"},
+	}
+	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
+	status, _, body := httpPostForm(t, iss.TokenURL(), form, basic)
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+	if e, _ := parseOAuthError(t, body); e != "invalid_request" {
+		t.Errorf("error = %q, want invalid_request", e)
+	}
+}
+
+func TestPKCE_VerifierTooShort_InvalidRequest(t *testing.T) {
+	iss := startMinimal(t)
+	verifier := strings.Repeat("a", 64)
+	q := url.Values{
+		"client_id":             {iss.ClientID()},
+		"redirect_uri":          {"http://localhost:8080/callback"},
+		"response_type":         {"code"},
+		"audience":              {"test-api"},
+		"code_challenge":        {pkceChallenge(verifier)},
+		"code_challenge_method": {"S256"},
+	}
+	_, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	loc, _ := url.Parse(headers.Get("Location"))
+	code := loc.Query().Get("code")
+
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"code_verifier": {strings.Repeat("a", 42)},
+	}
+	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
+	status, _, _ := httpPostForm(t, iss.TokenURL(), form, basic)
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+func TestPKCE_VerifierTooLong_InvalidRequest(t *testing.T) {
+	iss := startMinimal(t)
+	verifier := strings.Repeat("a", 64)
+	q := url.Values{
+		"client_id":             {iss.ClientID()},
+		"redirect_uri":          {"http://localhost:8080/callback"},
+		"response_type":         {"code"},
+		"audience":              {"test-api"},
+		"code_challenge":        {pkceChallenge(verifier)},
+		"code_challenge_method": {"S256"},
+	}
+	_, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	loc, _ := url.Parse(headers.Get("Location"))
+	code := loc.Query().Get("code")
+
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"code_verifier": {strings.Repeat("a", 129)},
+	}
+	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
+	status, _, _ := httpPostForm(t, iss.TokenURL(), form, basic)
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
 	}
 }

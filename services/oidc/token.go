@@ -1,7 +1,10 @@
 package oidc
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"time"
@@ -118,6 +121,20 @@ func (i *Issuer) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rec.codeChallenge != "" {
+		verifier := r.PostForm.Get("code_verifier")
+		if err := validatePKCEVerifier(verifier, rec.codeChallenge); err != nil {
+			oauthErr := "invalid_grant"
+			if err.Error() == "code_verifier is required" ||
+				err.Error() == "code_verifier length out of range (43-128)" ||
+				err.Error() == "code_verifier contains invalid characters" {
+				oauthErr = "invalid_request"
+			}
+			writeOAuthError(w, http.StatusBadRequest, oauthErr, err.Error())
+			return
+		}
+	}
+
 	now := time.Now()
 	exp := now.Add(i.tokenTTL)
 
@@ -170,6 +187,28 @@ func (i *Issuer) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeTokenResponse(w, resp)
+}
+
+// validatePKCEVerifier checks the verifier against the stored challenge per
+// RFC 7636 §4. Returns nil on match.
+func validatePKCEVerifier(verifier, challenge string) error {
+	if verifier == "" {
+		return errors.New("code_verifier is required")
+	}
+	if len(verifier) < 43 || len(verifier) > 128 {
+		return errors.New("code_verifier length out of range (43-128)")
+	}
+	for _, r := range verifier {
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
+			r == '-' || r == '.' || r == '_' || r == '~') {
+			return errors.New("code_verifier contains invalid characters")
+		}
+	}
+	h := sha256.Sum256([]byte(verifier))
+	if base64.RawURLEncoding.EncodeToString(h[:]) != challenge {
+		return errors.New("code_verifier mismatch")
+	}
+	return nil
 }
 
 func (i *Issuer) handleClientCredentialsGrant(w http.ResponseWriter, r *http.Request) {

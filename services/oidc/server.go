@@ -24,7 +24,7 @@ func (i *Issuer) startServer(ctx context.Context) error {
 		return fmt.Errorf("oidc: generate RSA key: %w", err)
 	}
 	i.privKey = priv
-	i.codeStore = newCodeStore()
+	i.codeStore = newCodeStore(i.codeTTL)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

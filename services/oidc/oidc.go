@@ -13,9 +13,9 @@
 // Strictness: misconfiguration is rejected at Start with a descriptive error;
 // every endpoint returns RFC 6749 §5.2 errors with the right HTTP status.
 //
-// PKCE fields are accepted at /authorize and rubber-stamped at /token (the
-// verifier is NOT validated against the challenge). This is documented
-// rather than hidden: tests of PKCE-validation behavior require a real IdP.
+// PKCE is enforced for the S256 method (RFC 7636). When code_challenge is
+// provided at /authorize, code_challenge_method must be S256, and the
+// /token request must include a matching code_verifier.
 package oidc
 
 import (
@@ -54,6 +54,8 @@ type Issuer struct {
 	defaultSubjectExplicit bool
 	tokenTTL               time.Duration
 	tokenTTLExplicit       bool
+	codeTTL                time.Duration
+	codeTTLExplicit        bool
 
 	// Property-key overrides (defaults applied at Start).
 	propIssuer       string
@@ -129,6 +131,14 @@ func (i *Issuer) WithTokenTTL(ttl time.Duration) *Issuer {
 	return i
 }
 
+// WithCodeTTL sets the lifetime of issued authorization codes. Default: 10 minutes.
+// Must be > 0.
+func (i *Issuer) WithCodeTTL(ttl time.Duration) *Issuer {
+	i.codeTTL = ttl
+	i.codeTTLExplicit = true
+	return i
+}
+
 // WithIssuerURLPropertyName overrides the published key for the issuer URL
 // property. Default: "<name>.issuer".
 func (i *Issuer) WithIssuerURLPropertyName(k string) *Issuer { i.propIssuer = k; return i }
@@ -195,6 +205,9 @@ func (i *Issuer) Start(ctx context.Context, logger *slog.Logger) (testrig.Proper
 	}
 	if !i.tokenTTLExplicit && i.tokenTTL == 0 {
 		i.tokenTTL = time.Hour
+	}
+	if !i.codeTTLExplicit && i.codeTTL == 0 {
+		i.codeTTL = 10 * time.Minute
 	}
 
 	i.logger = logger

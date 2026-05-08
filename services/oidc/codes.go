@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// codeTTL is the lifetime of an issued authorization code.
-const codeTTL = 10 * time.Minute
-
 // codeRecord captures the state stored against an issued code.
 type codeRecord struct {
 	clientID      string
@@ -29,15 +26,19 @@ type codeRecord struct {
 type codeStore struct {
 	mu      sync.Mutex
 	records map[string]*codeRecord
+	ttl     time.Duration
 }
 
-func newCodeStore() *codeStore {
-	return &codeStore{records: make(map[string]*codeRecord)}
+func newCodeStore(ttl time.Duration) *codeStore {
+	return &codeStore{
+		records: make(map[string]*codeRecord),
+		ttl:     ttl,
+	}
 }
 
 // issue returns a fresh random code (32-byte base64url) bound to rec.
 func (s *codeStore) issue(rec *codeRecord) (string, error) {
-	rec.expiresAt = time.Now().Add(codeTTL)
+	rec.expiresAt = time.Now().Add(s.ttl)
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err

@@ -54,6 +54,16 @@ func (i *Issuer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// PKCE S256 enforcement (RFC 7636).
+	codeChallenge := q.Get("code_challenge")
+	if codeChallenge != "" {
+		method := q.Get("code_challenge_method")
+		if method != "S256" {
+			i.redirectError(w, r, redirectURI, q.Get("state"), "invalid_request", "code_challenge_method must be S256")
+			return
+		}
+	}
+
 	// Subject extension (testrig-specific).
 	subject := q.Get("sub")
 	if subject == "" {
@@ -70,7 +80,7 @@ func (i *Issuer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		state:         q.Get("state"),
 		nonce:         q.Get("nonce"),
 		audience:      audience,
-		codeChallenge: q.Get("code_challenge"),
+		codeChallenge: codeChallenge,
 		subject:       subject,
 		authTime:      time.Now(),
 	}

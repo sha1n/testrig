@@ -61,7 +61,7 @@ func TestAuthorize_NonceFlowsToIDToken(t *testing.T) {
 	}
 }
 
-func TestAuthorize_PKCERubberStamp(t *testing.T) {
+func TestAuthorize_PKCE_AcceptedAtAuthorize(t *testing.T) {
 	iss := startMinimal(t)
 	loc := authorizeHappy(t, iss, url.Values{
 		"code_challenge":        []string{"abc123"},
@@ -225,5 +225,24 @@ func TestAuthorize_POST_Succeeds(t *testing.T) {
 	loc, _ := url.Parse(headers.Get("Location"))
 	if loc.Query().Get("code") == "" {
 		t.Errorf("missing code in redirect")
+	}
+}
+
+func TestAuthorize_PKCE_PlainMethod_RedirectsInvalidRequest(t *testing.T) {
+	iss := startMinimal(t)
+	q := url.Values{
+		"client_id":             {iss.ClientID()},
+		"redirect_uri":          {"http://localhost:8080/callback"},
+		"response_type":         {"code"},
+		"code_challenge":        {"some-challenge"},
+		"code_challenge_method": {"plain"},
+	}
+	status, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	if status != http.StatusFound {
+		t.Errorf("status = %d, want 302", status)
+	}
+	loc, _ := url.Parse(headers.Get("Location"))
+	if loc.Query().Get("error") != "invalid_request" {
+		t.Errorf("error = %q, want invalid_request", loc.Query().Get("error"))
 	}
 }
