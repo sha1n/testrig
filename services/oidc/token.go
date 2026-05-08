@@ -17,6 +17,7 @@ type oauthError struct {
 
 func writeOAuthError(w http.ResponseWriter, status int, code, desc string) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Basic realm="oidc-test-issuer"`)
 	}
@@ -24,12 +25,23 @@ func writeOAuthError(w http.ResponseWriter, status int, code, desc string) {
 	_ = json.NewEncoder(w).Encode(oauthError{Error: code, ErrorDescription: desc})
 }
 
+// writeTokenResponse marshals a successful /token JSON response with the
+// RFC 6749 §5.1-mandated Cache-Control: no-store header.
+func writeTokenResponse(w http.ResponseWriter, payload map[string]any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
 // authenticateClient enforces "exactly one of" Basic OR body, validates the
 // credentials match the registered client. Returns true on success.
 func (i *Issuer) authenticateClient(r *http.Request) (ok bool, errorCode, desc string, status int) {
 	user, pass, hasBasic := r.BasicAuth()
-	bodyID := r.FormValue("client_id")
-	bodySecret := r.FormValue("client_secret")
+	// RFC 6749 §2.3.1: credentials must travel in the request body, not the
+	// URL query string. r.PostForm.Get reads body only; r.FormValue would
+	// also accept query-string credentials.
+	bodyID := r.PostForm.Get("client_id")
+	bodySecret := r.PostForm.Get("client_secret")
 	hasBody := bodyID != "" || bodySecret != ""
 
 	if hasBasic && hasBody {
@@ -144,8 +156,7 @@ func (i *Issuer) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		resp["access_token"] = accessTok
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeTokenResponse(w, resp)
 }
 
 func (i *Issuer) handleClientCredentialsGrant(w http.ResponseWriter, r *http.Request) {
@@ -176,8 +187,7 @@ func (i *Issuer) handleClientCredentialsGrant(w http.ResponseWriter, r *http.Req
 		writeOAuthError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	writeTokenResponse(w, map[string]any{
 		"access_token": tok,
 		"token_type":   "Bearer",
 		"expires_in":   int(i.tokenTTL.Seconds()),
