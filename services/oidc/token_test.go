@@ -193,6 +193,10 @@ func TestToken_AccessTokenClaims_AuthCode(t *testing.T) {
 	if c["scope"] != "read write" {
 		t.Errorf("scope = %v, want 'read write'", c["scope"])
 	}
+	// RFC 9068 §2.2: jti REQUIRED on JWT access tokens.
+	if jti, _ := c["jti"].(string); jti == "" {
+		t.Errorf("jti missing or empty on auth_code access_token")
+	}
 }
 
 func TestToken_AccessTokenClaims_ClientCredentials(t *testing.T) {
@@ -216,6 +220,10 @@ func TestToken_AccessTokenClaims_ClientCredentials(t *testing.T) {
 	}
 	if c["aud"] != "test-api" {
 		t.Errorf("aud = %v, want test-api", c["aud"])
+	}
+	// RFC 9068 §2.2: jti REQUIRED on JWT access tokens.
+	if jti, _ := c["jti"].(string); jti == "" {
+		t.Errorf("jti missing or empty on client_credentials access_token")
 	}
 }
 

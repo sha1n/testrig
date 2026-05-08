@@ -171,12 +171,18 @@ func (i *Issuer) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rec.audience != "" {
+		jti, err := generateRandomHex(16)
+		if err != nil {
+			writeOAuthError(w, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
 		accessClaims := jwt.MapClaims{
 			"iss": i.IssuerURL(),
 			"sub": rec.subject,
 			"aud": rec.audience,
 			"iat": now.Unix(),
 			"exp": exp.Unix(),
+			"jti": jti,
 		}
 		if rec.scope != "" {
 			accessClaims["scope"] = rec.scope
@@ -254,12 +260,18 @@ func (i *Issuer) handleClientCredentialsGrant(w http.ResponseWriter, r *http.Req
 
 	now := time.Now()
 	exp := now.Add(i.tokenTTL)
+	jti, err := generateRandomHex(16)
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
 	claims := jwt.MapClaims{
 		"iss": i.IssuerURL(),
 		"sub": i.clientID, // Auth0 convention for client_credentials
 		"aud": audience,
 		"iat": now.Unix(),
 		"exp": exp.Unix(),
+		"jti": jti,
 	}
 	scope := r.PostForm.Get("scope")
 	if scope != "" {

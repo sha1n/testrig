@@ -133,3 +133,35 @@ func TestUserinfo_WrongAudience_401_InvalidToken(t *testing.T) {
 		t.Errorf("WWW-Authenticate = %q", headers.Get("WWW-Authenticate"))
 	}
 }
+
+// TestUserinfo_POST_Succeeds verifies that POST /userinfo works the same as
+// GET. OIDC Core §5.3 makes both methods MUST. The Bearer token is read from
+// the Authorization header in both cases.
+func TestUserinfo_POST_Succeeds(t *testing.T) {
+	iss := startMinimal(t)
+	tok, err := iss.SignFor("alice", "test-api", time.Minute)
+	if err != nil {
+		t.Fatalf("SignFor: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, iss.UserinfoURL(), nil)
+	if err != nil {
+		t.Fatalf("build req: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d body = %s", resp.StatusCode, body)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["sub"] != "alice" {
+		t.Errorf("sub = %v, want alice", got["sub"])
+	}
+}

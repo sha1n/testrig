@@ -79,6 +79,7 @@ func (i *Issuer) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /authorize", i.handleAuthorize)
 	mux.HandleFunc("POST /token", i.handleToken)
 	mux.HandleFunc("GET /userinfo", i.handleUserinfo)
+	mux.HandleFunc("POST /userinfo", i.handleUserinfo)
 }
 
 // generateRandomHex returns n random bytes as a lowercase hex string.

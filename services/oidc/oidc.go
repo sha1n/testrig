@@ -43,21 +43,21 @@ type Issuer struct {
 	name string
 
 	// Configured values (mutated by With* setters; snapshotted at Start).
-	keyID                  string
-	keyIDExplicit          bool
-	clientID               string
-	clientIDExplicit       bool
-	clientSecret           string
-	clientSecretExplicit   bool
-	redirectURIs           []string
-	allowedAudiences       []string
-	defaultSubject         string
-	defaultSubjectExplicit bool
-	tokenTTL               time.Duration
-	tokenTTLExplicit       bool
-	codeTTL                time.Duration
-	codeTTLExplicit        bool
-	refreshTokenTTL        time.Duration
+	keyID                   string
+	keyIDExplicit           bool
+	clientID                string
+	clientIDExplicit        bool
+	clientSecret            string
+	clientSecretExplicit    bool
+	redirectURIs            []string
+	allowedAudiences        []string
+	defaultSubject          string
+	defaultSubjectExplicit  bool
+	tokenTTL                time.Duration
+	tokenTTLExplicit        bool
+	codeTTL                 time.Duration
+	codeTTLExplicit         bool
+	refreshTokenTTL         time.Duration
 	refreshTokenTTLExplicit bool
 
 	// Property-key overrides (defaults applied at Start).
