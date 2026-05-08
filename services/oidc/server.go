@@ -27,6 +27,7 @@ func (i *Issuer) startServer(ctx context.Context) error {
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
+		i.privKey = nil // revert partial state so retries get a clean slate
 		return fmt.Errorf("oidc: bind listener: %w", err)
 	}
 	i.listener = ln

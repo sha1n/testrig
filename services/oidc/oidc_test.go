@@ -45,7 +45,7 @@ func TestStart_FullConfig_Succeeds(t *testing.T) {
 	if _, err := iss.Start(context.Background(), slog.Default()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	_ = iss.Stop(context.Background())
+	defer func() { _ = iss.Stop(context.Background()) }()
 }
 
 func TestStart_StartTwice_ReturnsError(t *testing.T) {
@@ -87,7 +87,8 @@ func TestStop_BeforeStart_NoOp(t *testing.T) {
 
 func TestStop_Twice_NoOp(t *testing.T) {
 	iss := startMinimal(t)
-	// First Stop is in t.Cleanup from startMinimal; we verify a second Stop is also fine.
+	// Stop is called twice here; t.Cleanup from startMinimal will call it
+	// a third time. All three calls should succeed without error.
 	if err := iss.Stop(context.Background()); err != nil {
 		t.Errorf("first explicit Stop: %v", err)
 	}

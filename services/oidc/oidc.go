@@ -197,7 +197,7 @@ func (i *Issuer) Start(ctx context.Context, logger *slog.Logger) (testrig.Proper
 		i.defaultSubject = "test-user"
 	}
 	if !i.tokenTTLExplicit && i.tokenTTL == 0 {
-		i.tokenTTL = 1 * time.Hour
+		i.tokenTTL = time.Hour
 	}
 
 	i.logger = logger
