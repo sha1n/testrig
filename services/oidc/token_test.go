@@ -301,9 +301,12 @@ func TestToken_WrongClientID_InvalidClient_401(t *testing.T) {
 	iss := startMinimal(t)
 	form := url.Values{"grant_type": {"client_credentials"}, "audience": {"test-api"}}
 	basic := &struct{ User, Pass string }{"wrong-client", iss.ClientSecret()}
-	status, _, _ := httpPostForm(t, iss.TokenURL(), form, basic)
+	status, _, body := httpPostForm(t, iss.TokenURL(), form, basic)
 	if status != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", status)
+	}
+	if e, _ := parseOAuthError(t, body); e != "invalid_client" {
+		t.Errorf("error = %q, want invalid_client", e)
 	}
 }
 
