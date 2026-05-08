@@ -70,16 +70,22 @@ func TestSomething(t *testing.T) {
 - **Opt-in startup ordering.** Use `testrig.NewStages(a).Then(b, c)` and
   `env.WithStages(...)` when you need explicit ordering between groups
   of services.
-- **Pre-built services.** `services/postgres` and `services/wiremock` ship as
-  testcontainers-backed implementations. New services are a single `Service`
-  interface implementation away (3 methods: `Name`, `Start`, `Stop`).
+- **Pre-built services.** `services/postgres`, `services/wiremock`, and
+  `services/oidc` ship as ready-to-use implementations (the first two
+  testcontainers-backed; OIDC is a non-dockerized in-process issuer).
+  New services are a single `Service` interface implementation away
+  (3 methods: `Name`, `Start`, `Stop`).
 
 ## Pre-built services
 
+Each service has its own README with a quickstart, full configuration
+reference, and a "Gaps and workarounds" section.
+
 | Service | Import | Notes |
 |---|---|---|
-| PostgreSQL | `github.com/sha1n/testrig/services/postgres` | testcontainers-backed; exposes `DSN()` and `DB(ctx)` once started; all property keys customizable. |
-| WireMock | `github.com/sha1n/testrig/services/wiremock` | testcontainers-backed; exposes `URL()` and `Client()`; URL property key customizable. |
+| [PostgreSQL](services/postgres/README.md) | `github.com/sha1n/testrig/services/postgres` | testcontainers-backed; exposes `DSN()` and `DB(ctx)` once started; all property keys customizable. |
+| [WireMock](services/wiremock/README.md) | `github.com/sha1n/testrig/services/wiremock` | testcontainers-backed; exposes `URL()` and `Client()`; URL property key customizable. |
+| [OIDC](services/oidc/README.md) | `github.com/sha1n/testrig/services/oidc` | non-dockerized, Auth0-style OIDC issuer; supports `authorization_code` (with PKCE S256), `client_credentials`, and `refresh_token` grants; serves discovery, JWKS, `/authorize`, `/token`, `/userinfo`. |
 
 ## Examples
 
@@ -116,4 +122,4 @@ make test            # tests only
 make build-examples  # build example binaries into bin/
 ```
 
-Requires Go 1.24 or later. Tests require Docker (testcontainers).
+Requires Go 1.25 or later. Tests require Docker (testcontainers).
