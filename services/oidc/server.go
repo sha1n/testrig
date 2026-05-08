@@ -68,7 +68,7 @@ func (i *Issuer) stopServer(ctx context.Context) error {
 // are added by the discovery/jwks/authorize/token files in their own
 // tasks; this stub is replaced as those land.
 func (i *Issuer) registerRoutes(mux *http.ServeMux) {
-	// Filled in by Tasks 4, 5, 8, 10. For Task 2 the listener serves only 404.
+	mux.HandleFunc("GET /.well-known/openid-configuration", i.handleDiscovery)
 }
 
 // generateRandomHex returns n random bytes as a lowercase hex string.
