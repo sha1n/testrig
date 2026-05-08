@@ -6,6 +6,30 @@ updates:
       interval: "monthly"
     open-pull-requests-limit: 5
 
+  - package-ecosystem: "gomod"
+    directory: "/services/oidc"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "gomod"
+    directory: "/services/postgres"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "gomod"
+    directory: "/services/wiremock"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "gomod"
+    directory: "/examples"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

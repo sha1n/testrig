@@ -231,8 +231,12 @@ func validatePKCEVerifier(verifier, challenge string) error {
 		return errPKCELength
 	}
 	for _, r := range verifier {
-		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
-			r == '-' || r == '.' || r == '_' || r == '~') {
+		switch {
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '-', r == '.', r == '_', r == '~':
+		default:
 			return errPKCEBadCharacter
 		}
 	}

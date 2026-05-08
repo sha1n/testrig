@@ -9,6 +9,16 @@ can stub HTTP responses with a fluent Go API. The service publishes its base URL
 as a `testrig.Properties` entry so it lands directly in the application's config
 loader without any bridging code.
 
+## Install
+
+This is a separate Go module. Add it explicitly when you need it:
+
+```
+go get github.com/sha1n/testrig/services/wiremock
+```
+
+It transitively pulls in `github.com/sha1n/testrig`, the testcontainers stack, and `github.com/wiremock/go-wiremock`.
+
 ## Quickstart
 
 ```go

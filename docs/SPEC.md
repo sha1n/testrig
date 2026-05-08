@@ -10,24 +10,39 @@ The framework is designed for integration tests that need real services (databas
 
 ## Module
 
-- Module path: `github.com/sha1n/testrig`
-- Go version: `1.24`
+The repository is a Go multi-module workspace. Each pre-built service is published as its own module so consumers download only the dependencies they actually use; the engine itself depends on the standard library plus `golang.org/x/sync`.
+
+| Module | Path | Tag prefix |
+|---|---|---|
+| Engine | `github.com/sha1n/testrig` | (none) — e.g. `v0.1.0` |
+| OIDC service | `github.com/sha1n/testrig/services/oidc` | `services/oidc/` — e.g. `services/oidc/v0.1.0` |
+| Postgres service | `github.com/sha1n/testrig/services/postgres` | `services/postgres/` |
+| WireMock service | `github.com/sha1n/testrig/services/wiremock` | `services/wiremock/` |
+| Examples | `github.com/sha1n/testrig/examples` | not published |
+
+- Go version: `1.25`
 - License: TBD (added separately)
+
+A `go.work` file at the repository root ties all modules together for editor and tool support. Each sub-module's `go.mod` carries a `require github.com/sha1n/testrig <engine version>` plus a `replace github.com/sha1n/testrig => ../..`. The replace makes local builds work before any engine tag exists; it has no effect on external consumers (Go ignores `replace` in dependency modules). Release flow: tag the engine first, then bump each sub-module's require to the engine's new version, commit, tag the sub-modules.
 
 ## Project Layout
 
 ```
-.                         — core framework (Env, Service, Stages, Properties, LifecycleHook, SetEnvVars)
-services/                 — pre-configured services (each implements testrig.Service)
-  ├── postgres/           — PostgreSQL service
-  └── wiremock/           — WireMock service
-examples/                 — runnable integration examples
+.                         — engine module: Env, Service, Stages, Properties, LifecycleHook, SetEnvVars
+go.work                   — workspace tying every module below together for local dev
+services/                 — each subdirectory is its own Go module
+  ├── oidc/               — non-dockerized OIDC issuer fixture
+  ├── postgres/           — PostgreSQL service (testcontainers-backed)
+  └── wiremock/           — WireMock service (testcontainers-backed)
+examples/                 — single Go module with runnable integration examples
+  ├── internal/sampleapp  — shared HTTP server used by both example apps
+  ├── internal/seed       — schema-seed testrig.Service used by both example apps
   ├── viper-app/          — Viper config-injection example
   └── koanf-app/          — koanf config-injection example
 docs/                     — specs and plans
 ```
 
-> **Layout invariant:** the framework's public API lives in the module root package `testrig`. Pre-built services live under `services/<name>/` and each implements `testrig.Service`.
+> **Layout invariant:** the framework's public API lives in the engine module root package `testrig`. Each pre-built service is its own module under `services/<name>/`, exporting a type that implements `testrig.Service`.
 
 ## Core Concepts
 
@@ -208,14 +223,17 @@ A WireMock service backed by testcontainers-go.
 
 ## Build & Test
 
+Every multi-module target iterates over the modules listed at the top of the `Makefile` (`MODULES := . services/oidc services/postgres services/wiremock examples`).
+
 ```
-make check          # format + lint + test (default)
-make test           # tests only
-make lint           # go vet + golangci-lint
+make check          # format + lint + test, every module (default)
+make test           # tests only, every module
+make lint           # go vet + golangci-lint, every module
 make format         # gofmt -s
-make coverage       # tests with coverage report
+make coverage       # per-module coverage (writes <module>/coverage.out)
 make build-examples # build example binaries into bin/
+make go-get         # tidy every module
 make clean          # remove build artifacts and bin/
 ```
 
-All tests are race-detector-clean: `go test ./... -race`.
+All tests are race-detector-clean: each module's CI job runs `go test -race ./...`.

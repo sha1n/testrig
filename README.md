@@ -78,6 +78,10 @@ func TestSomething(t *testing.T) {
 
 ## Pre-built services
 
+Each pre-built service is a separate Go module. `go get github.com/sha1n/testrig`
+pulls only the engine; testcontainers, pgx, JWT, and other heavy deps come in
+only when you import a service.
+
 Each service has its own README with a quickstart, full configuration
 reference, and a "Gaps and workarounds" section.
 
@@ -114,12 +118,53 @@ package is the canonical demo of how to write your own
 The full public-API and runtime-semantics specification lives at
 [`docs/SPEC.md`](docs/SPEC.md).
 
+## Repository layout
+
+This repo is a Go multi-module workspace. Each module is independently
+versioned and published, so consumers download only the dependencies they
+actually use.
+
+```
+.                              github.com/sha1n/testrig            (engine; stdlib + golang.org/x/sync)
+services/oidc/                 github.com/sha1n/testrig/services/oidc
+services/postgres/             github.com/sha1n/testrig/services/postgres
+services/wiremock/             github.com/sha1n/testrig/services/wiremock
+examples/                      github.com/sha1n/testrig/examples   (not published)
+go.work                        ties all of the above together for local development
+```
+
+Each sub-module imports the engine via `github.com/sha1n/testrig`, and
+each sub-module `go.mod` carries a `require github.com/sha1n/testrig
+<engine version>` plus a `replace github.com/sha1n/testrig => ../..`.
+The replace lets local builds work before any engine version is
+published; it has no effect on external consumers (Go ignores `replace`
+directives in dependency modules). `go.work` ties all modules together
+for editor and tool support.
+
+### Tagging and releases
+
+Each module is versioned independently using the standard Go sub-module
+tag scheme:
+
+| Module | Tag prefix | Example |
+|---|---|---|
+| root | (none) | `v0.1.0` |
+| `services/oidc` | `services/oidc/` | `services/oidc/v0.1.0` |
+| `services/postgres` | `services/postgres/` | `services/postgres/v0.1.0` |
+| `services/wiremock` | `services/wiremock/` | `services/wiremock/v0.1.0` |
+
+Release order: tag the engine first, then bump each sub-module's
+`require github.com/sha1n/testrig` to the engine's new version, commit,
+then tag the sub-modules. The `replace` line stays in place — it's
+inert for consumers and keeps local development working.
+
 ## Build
 
 ```
-make check           # format + lint + test (default)
-make test            # tests only
+make check           # format + lint + test across every module (default)
+make test            # tests only (every module)
 make build-examples  # build example binaries into bin/
+make go-get          # tidy every module
 ```
 
 Requires Go 1.25 or later. Tests require Docker (testcontainers).

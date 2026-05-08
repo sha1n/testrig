@@ -13,6 +13,15 @@ jobs:
   build-test:
     name: Build & Test
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - .
+          - services/oidc
+          - services/postgres
+          - services/wiremock
+          - examples
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,16 +31,25 @@ jobs:
         with:
           go-version-file: 'go.mod'
           cache: true
+          cache-dependency-path: |
+            go.sum
+            services/oidc/go.sum
+            services/postgres/go.sum
+            services/wiremock/go.sum
+            examples/go.sum
 
       - name: Download dependencies
+        working-directory: ${{ matrix.module }}
         run: go mod download
 
       - name: Build
+        working-directory: ${{ matrix.module }}
         run: |
           PKGS=$(go list ./... 2>/dev/null || true)
           if [ -n "$PKGS" ]; then go build ./...; else echo "No packages to build."; fi
 
       - name: Test
+        working-directory: ${{ matrix.module }}
         run: |
           PKGS=$(go list ./... 2>/dev/null || true)
           if [ -n "$PKGS" ]; then go test -race ./...; else echo "No packages to test."; fi

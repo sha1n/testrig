@@ -4,6 +4,16 @@ An in-process, Auth0-style OIDC identity-provider fixture — no Docker, no netw
 
 The `oidc.Issuer` is a fully-functional OIDC issuer that binds to a random port on `127.0.0.1`, generates a fresh RSA-2048 keypair, and serves the five endpoint families required by OIDC Core and RFC 6749. It supports `authorization_code` (with optional PKCE S256), `client_credentials`, and `refresh_token` (with rotation) grant types. In a `testrig.Env`, `Issuer` implements `testrig.Service`: `Start` brings the HTTP server up and publishes seven properties — URLs, client credentials, and audience — which your test can wire directly into the application's config. `Stop` is idempotent and clears all runtime state, so the same `Issuer` instance can be restarted between test suites with a fresh keypair and a fresh port.
 
+## Install
+
+This is a separate Go module. Add it explicitly when you need it:
+
+```
+go get github.com/sha1n/testrig/services/oidc
+```
+
+It transitively pulls in `github.com/sha1n/testrig` and `github.com/golang-jwt/jwt/v5`. No Docker required.
+
 ## Quickstart
 
 The most common scenario: your service validates incoming JWTs via JWKS. Use `SignFor` to mint a token on the test side and `JWKSURL` to point the validator at the fixture.

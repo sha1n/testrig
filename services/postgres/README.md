@@ -4,6 +4,16 @@ A testcontainers-backed PostgreSQL service for integration tests.
 
 `services/postgres` wraps the [testcontainers-go postgres module](https://golang.testcontainers.org/modules/postgres/) and implements `testrig.Service` so it integrates directly with `testrig.Env`. On `Start` it launches a Postgres container, waits for it to accept connections, and publishes host, port, credentials, and a fully-constructed DSN as `testrig.Properties`. Once started, typed accessors (`DSN()`, `DB(ctx)`) give tests a direct handle to the running instance.
 
+## Install
+
+This is a separate Go module. Add it explicitly when you need it:
+
+```
+go get github.com/sha1n/testrig/services/postgres
+```
+
+It transitively pulls in `github.com/sha1n/testrig` and the testcontainers / pgx stack.
+
 ## Quickstart
 
 ```go
