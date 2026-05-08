@@ -24,6 +24,7 @@ func (i *Issuer) startServer(ctx context.Context) error {
 		return fmt.Errorf("oidc: generate RSA key: %w", err)
 	}
 	i.privKey = priv
+	i.codeStore = newCodeStore()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -68,6 +69,7 @@ func (i *Issuer) stopServer(ctx context.Context) error {
 func (i *Issuer) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/openid-configuration", i.handleDiscovery)
 	mux.HandleFunc("GET /.well-known/jwks.json", i.handleJWKS)
+	mux.HandleFunc("GET /authorize", i.handleAuthorize)
 }
 
 // generateRandomHex returns n random bytes as a lowercase hex string.

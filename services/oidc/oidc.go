@@ -73,11 +73,6 @@ type Issuer struct {
 	codeStore *codeStore
 }
 
-// codeStore is the type for the in-memory authorization-code store.
-// Filled in by Task 8 (codes.go). Defined here so the Issuer struct
-// can reference it; later tasks may move this declaration to codes.go.
-type codeStore struct{}
-
 // New creates an Issuer with default configuration (random KeyID/ClientID/
 // ClientSecret/etc applied at Start).
 func New(name string) *Issuer {
