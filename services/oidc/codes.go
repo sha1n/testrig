@@ -21,7 +21,6 @@ type codeRecord struct {
 	codeChallenge string
 	subject       string
 	expiresAt     time.Time
-	consumed      bool
 }
 
 // codeStore is a single-use, expiry-bounded code store. Safe for concurrent
@@ -38,7 +37,6 @@ func newCodeStore() *codeStore {
 // issue returns a fresh random code (32-byte base64url) bound to rec.
 func (s *codeStore) issue(rec *codeRecord) (string, error) {
 	rec.expiresAt = time.Now().Add(codeTTL)
-	rec.consumed = false
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
@@ -50,25 +48,31 @@ func (s *codeStore) issue(rec *codeRecord) (string, error) {
 	return code, nil
 }
 
-// consume atomically marks the code consumed and returns its record. Returns
-// (record, "ok"); or (nil, "not_found") / (nil, "expired") / (nil, "consumed").
-// Caller decides which OAuth error to respond with based on the reason
-// string. Always treats all three as `invalid_grant` per RFC 6749 §5.2.
-func (s *codeStore) consume(code string) (*codeRecord, string) {
+// consume atomically validates and removes the record bound to code. The
+// record is removed (single-use) only when all checks pass. expectedRedirectURI
+// is matched against the redirect_uri the code was issued with — a mismatch
+// leaves the record intact so a legitimate retry with the correct value can
+// still succeed (per RFC 6749 §4.1.3 validation ordering).
+//
+// Returns (record, "ok") on success; (nil, reason) otherwise where reason is
+// "not_found", "expired", or "redirect_uri_mismatch". The caller maps all
+// non-"ok" reasons to `invalid_grant` per RFC 6749 §5.2.
+func (s *codeStore) consume(code, expectedRedirectURI string) (*codeRecord, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.records[code]
 	if !ok {
 		return nil, "not_found"
 	}
-	if rec.consumed {
-		return nil, "consumed"
-	}
 	if time.Now().After(rec.expiresAt) {
 		delete(s.records, code)
 		return nil, "expired"
 	}
-	rec.consumed = true
+	if rec.redirectURI != expectedRedirectURI {
+		// Leave the record in place: a legitimate retry with the correct
+		// redirect_uri must still succeed.
+		return nil, "redirect_uri_mismatch"
+	}
 	delete(s.records, code)
 	return rec, "ok"
 }

@@ -102,13 +102,9 @@ func (i *Issuer) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rec, reason := i.codeStore.consume(code)
+	rec, reason := i.codeStore.consume(code, redirectURI)
 	if reason != "ok" {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "code "+reason)
-		return
-	}
-	if rec.redirectURI != redirectURI {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "redirect_uri mismatch")
 		return
 	}
 

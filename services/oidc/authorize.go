@@ -18,12 +18,13 @@ func (i *Issuer) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	responseType := q.Get("response_type")
 
 	// Pre-validation: never redirect on bad client_id or redirect_uri.
+	// Errors are JSON per RFC 6749 §5.2 (matching /token's error shape).
 	if clientID == "" || clientID != i.clientID {
-		http.Error(w, "invalid_client", http.StatusBadRequest)
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client", "client_id is missing or invalid")
 		return
 	}
 	if redirectURI == "" || !slices.Contains(i.redirectURIs, redirectURI) {
-		http.Error(w, "invalid_request: redirect_uri", http.StatusBadRequest)
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "redirect_uri is missing or unregistered")
 		return
 	}
 	// Beyond this point, errors come back as 302 to redirectURI.

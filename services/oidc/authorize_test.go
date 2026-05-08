@@ -84,16 +84,29 @@ func TestAuthorize_MultipleCodes_AreUnique(t *testing.T) {
 	}
 }
 
+// assertAuthorize400JSON checks the response is HTTP 400, no redirect, and
+// the body parses as an OAuth JSON error with the expected error code.
+func assertAuthorize400JSON(t *testing.T, target, wantError string) {
+	t.Helper()
+	status, headers, body := httpGet(t, target)
+	if status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+	if loc := headers.Get("Location"); loc != "" {
+		t.Errorf("unexpected redirect to %q", loc)
+	}
+	if got, _ := parseOAuthError(t, body); got != wantError {
+		t.Errorf("error = %q, want %q", got, wantError)
+	}
+}
+
 func TestAuthorize_MissingClientID_Returns400_NoRedirect(t *testing.T) {
 	iss := startMinimal(t)
 	q := url.Values{
 		"redirect_uri":  {"http://localhost:8080/callback"},
 		"response_type": {"code"},
 	}
-	status, _, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
-	if status != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", status)
-	}
+	assertAuthorize400JSON(t, iss.AuthorizationURL()+"?"+q.Encode(), "invalid_client")
 }
 
 func TestAuthorize_WrongClientID_Returns400_NoRedirect(t *testing.T) {
@@ -103,10 +116,7 @@ func TestAuthorize_WrongClientID_Returns400_NoRedirect(t *testing.T) {
 		"redirect_uri":  {"http://localhost:8080/callback"},
 		"response_type": {"code"},
 	}
-	status, _, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
-	if status != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", status)
-	}
+	assertAuthorize400JSON(t, iss.AuthorizationURL()+"?"+q.Encode(), "invalid_client")
 }
 
 func TestAuthorize_MissingRedirectURI_Returns400_NoRedirect(t *testing.T) {
@@ -115,10 +125,7 @@ func TestAuthorize_MissingRedirectURI_Returns400_NoRedirect(t *testing.T) {
 		"client_id":     {iss.ClientID()},
 		"response_type": {"code"},
 	}
-	status, _, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
-	if status != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", status)
-	}
+	assertAuthorize400JSON(t, iss.AuthorizationURL()+"?"+q.Encode(), "invalid_request")
 }
 
 func TestAuthorize_UnregisteredRedirectURI_Returns400_NoRedirect(t *testing.T) {
@@ -128,10 +135,7 @@ func TestAuthorize_UnregisteredRedirectURI_Returns400_NoRedirect(t *testing.T) {
 		"redirect_uri":  {"http://evil.example/cb"},
 		"response_type": {"code"},
 	}
-	status, _, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
-	if status != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", status)
-	}
+	assertAuthorize400JSON(t, iss.AuthorizationURL()+"?"+q.Encode(), "invalid_request")
 }
 
 func TestAuthorize_MissingResponseType_Redirects_InvalidRequest(t *testing.T) {

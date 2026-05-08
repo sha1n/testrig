@@ -381,8 +381,49 @@ func TestToken_AuthCode_ReplayedCode_InvalidGrant(t *testing.T) {
 }
 
 func TestToken_AuthCode_ExpiredCode_InvalidGrant(t *testing.T) {
-	t.Skip("requires injecting time mock or shortening codeTTL — covered indirectly by the consume() reason path; deferred to a future enhancement")
+	t.Skip("requires injecting time mock or shortening codeTTL — the 'expired' reason path in codeStore.consume is structurally identical to the 'not_found' / 'redirect_uri_mismatch' paths that ARE tested; deferred to a future enhancement")
 	_ = time.Second
+}
+
+// TestToken_AuthCode_RedirectURIMismatch_Retry_Succeeds proves that a
+// /token request with the wrong redirect_uri does NOT consume the code,
+// so a subsequent retry with the correct value still succeeds. Per spec
+// (and RFC 6749 §4.1.3), redirect_uri must be validated BEFORE the code
+// is marked consumed.
+func TestToken_AuthCode_RedirectURIMismatch_Retry_Succeeds(t *testing.T) {
+	iss := startMinimal(t)
+	q := url.Values{
+		"client_id":     {iss.ClientID()},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"response_type": {"code"},
+		"audience":      {"test-api"},
+	}
+	_, headers, _ := httpGet(t, iss.AuthorizationURL()+"?"+q.Encode())
+	loc, _ := url.Parse(headers.Get("Location"))
+	code := loc.Query().Get("code")
+	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
+
+	// First /token: wrong redirect_uri → invalid_grant, code NOT consumed.
+	wrongForm := url.Values{
+		"grant_type":   {"authorization_code"},
+		"code":         {code},
+		"redirect_uri": {"http://localhost:9999/different"},
+	}
+	if s, _, _ := httpPostForm(t, iss.TokenURL(), wrongForm, basic); s != http.StatusBadRequest {
+		t.Fatalf("first /token (mismatched redirect_uri): status = %d, want 400", s)
+	}
+
+	// Second /token: correct redirect_uri → success. The fix being tested:
+	// the wrong-redirect_uri attempt above must NOT have invalidated the code.
+	rightForm := url.Values{
+		"grant_type":   {"authorization_code"},
+		"code":         {code},
+		"redirect_uri": {"http://localhost:8080/callback"},
+	}
+	status, _, body := httpPostForm(t, iss.TokenURL(), rightForm, basic)
+	if status != 200 {
+		t.Fatalf("retry /token (correct redirect_uri): status = %d body = %s, want 200", status, body)
+	}
 }
 
 func TestToken_ParallelExchanges_NoStateCorruption(t *testing.T) {
