@@ -254,6 +254,13 @@ func TestStart_ZeroCodeTTL_ReturnsError(t *testing.T) {
 	})
 }
 
+func TestStart_ZeroRefreshTokenTTL_ReturnsError(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithRefreshTokenTTL(0) },
+		wantSub: "refresh_token_ttl must be > 0",
+	})
+}
+
 // Property tests do not use startMinimal because they need access to the
 // Properties map returned by Start (startMinimal discards it). They start
 // the Issuer directly and clean up via t.Cleanup.

@@ -76,7 +76,7 @@ func TestDiscovery_AdvertisedAlgsAndGrants(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	containsAll(t, "response_types_supported", d.ResponseTypesSupported, "code")
-	containsAll(t, "grant_types_supported", d.GrantTypesSupported, "authorization_code", "client_credentials")
+	containsAll(t, "grant_types_supported", d.GrantTypesSupported, "authorization_code", "client_credentials", "refresh_token")
 	containsAll(t, "id_token_signing_alg_values_supported", d.IDTokenSigningAlgValuesSupported, "RS256")
 	containsAll(t, "subject_types_supported", d.SubjectTypesSupported, "public")
 	containsAll(t, "token_endpoint_auth_methods_supported", d.TokenEndpointAuthMethodsSupported, "client_secret_basic", "client_secret_post")

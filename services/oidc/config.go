@@ -31,6 +31,9 @@ func (i *Issuer) validate() error {
 	if i.codeTTLExplicit && i.codeTTL <= 0 {
 		return fmt.Errorf("oidc: code_ttl must be > 0")
 	}
+	if i.refreshTokenTTLExplicit && i.refreshTokenTTL <= 0 {
+		return fmt.Errorf("oidc: refresh_token_ttl must be > 0")
+	}
 	if err := validateRedirectURIs(i.redirectURIs); err != nil {
 		return err
 	}

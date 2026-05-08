@@ -19,11 +19,12 @@ import (
 )
 
 type tokenResponse struct {
-	IDToken     string `json:"id_token,omitempty"`
-	AccessToken string `json:"access_token,omitempty"`
-	TokenType   string `json:"token_type,omitempty"`
-	ExpiresIn   int    `json:"expires_in,omitempty"`
-	Scope       string `json:"scope,omitempty"`
+	IDToken      string `json:"id_token,omitempty"`
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	TokenType    string `json:"token_type,omitempty"`
+	ExpiresIn    int    `json:"expires_in,omitempty"`
+	Scope        string `json:"scope,omitempty"`
 }
 
 // runAuthCode performs a full /authorize → /token round-trip and returns the
@@ -278,7 +279,7 @@ func TestToken_MissingGrantType_InvalidRequest(t *testing.T) {
 
 func TestToken_UnsupportedGrantType_UnsupportedGrantType(t *testing.T) {
 	iss := startMinimal(t)
-	form := url.Values{"grant_type": {"refresh_token"}}
+	form := url.Values{"grant_type": {"password"}}
 	basic := &struct{ User, Pass string }{iss.ClientID(), iss.ClientSecret()}
 	status, _, body := httpPostForm(t, iss.TokenURL(), form, basic)
 	if status != http.StatusBadRequest {

@@ -57,6 +57,8 @@ type Issuer struct {
 	tokenTTLExplicit       bool
 	codeTTL                time.Duration
 	codeTTLExplicit        bool
+	refreshTokenTTL        time.Duration
+	refreshTokenTTLExplicit bool
 
 	// Property-key overrides (defaults applied at Start).
 	propIssuer       string
@@ -68,14 +70,15 @@ type Issuer struct {
 	propAudience     string
 
 	// Runtime state (populated during Start, cleared by Stop).
-	mu         sync.Mutex
-	logger     *slog.Logger
-	server     *http.Server
-	listener   net.Listener
-	baseURL    string
-	privKey    *rsa.PrivateKey
-	codeStore  *codeStore
-	userClaims map[string]map[string]any
+	mu           sync.Mutex
+	logger       *slog.Logger
+	server       *http.Server
+	listener     net.Listener
+	baseURL      string
+	privKey      *rsa.PrivateKey
+	codeStore    *codeStore
+	refreshStore *refreshStore
+	userClaims   map[string]map[string]any
 }
 
 // New creates an Issuer with default configuration (random KeyID/ClientID/
@@ -139,6 +142,14 @@ func (i *Issuer) WithTokenTTL(ttl time.Duration) *Issuer {
 func (i *Issuer) WithCodeTTL(ttl time.Duration) *Issuer {
 	i.codeTTL = ttl
 	i.codeTTLExplicit = true
+	return i
+}
+
+// WithRefreshTokenTTL sets the lifetime for issued refresh tokens. Default:
+// 30 days. Must be > 0.
+func (i *Issuer) WithRefreshTokenTTL(ttl time.Duration) *Issuer {
+	i.refreshTokenTTL = ttl
+	i.refreshTokenTTLExplicit = true
 	return i
 }
 
@@ -229,6 +240,9 @@ func (i *Issuer) Start(ctx context.Context, logger *slog.Logger) (testrig.Proper
 	}
 	if !i.codeTTLExplicit && i.codeTTL == 0 {
 		i.codeTTL = 10 * time.Minute
+	}
+	if !i.refreshTokenTTLExplicit && i.refreshTokenTTL == 0 {
+		i.refreshTokenTTL = 30 * 24 * time.Hour
 	}
 
 	i.logger = logger

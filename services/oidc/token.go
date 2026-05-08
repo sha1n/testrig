@@ -86,8 +86,8 @@ func (i *Issuer) handleToken(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "grant_type is required")
 		return
 	}
-	if grantType != "authorization_code" && grantType != "client_credentials" {
-		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be authorization_code or client_credentials")
+	if grantType != "authorization_code" && grantType != "client_credentials" && grantType != "refresh_token" {
+		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be authorization_code, client_credentials, or refresh_token")
 		return
 	}
 
@@ -101,6 +101,8 @@ func (i *Issuer) handleToken(w http.ResponseWriter, r *http.Request) {
 		i.handleAuthCodeGrant(w, r)
 	case "client_credentials":
 		i.handleClientCredentialsGrant(w, r)
+	case "refresh_token":
+		i.handleRefreshGrant(w, r)
 	}
 }
 
@@ -185,6 +187,20 @@ func (i *Issuer) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp["access_token"] = accessTok
+	}
+
+	if scopeContainsOfflineAccess(rec.scope) {
+		rt, err := i.issueRefreshToken(&refreshRecord{
+			subject:  rec.subject,
+			audience: rec.audience,
+			scope:    rec.scope,
+			clientID: rec.clientID,
+		})
+		if err != nil {
+			writeOAuthError(w, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
+		resp["refresh_token"] = rt
 	}
 
 	writeTokenResponse(w, resp)

@@ -29,7 +29,7 @@ func (i *Issuer) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		JWKSURI:                           i.JWKSURL(),
 		UserinfoEndpoint:                  i.UserinfoURL(),
 		ResponseTypesSupported:            []string{"code"},
-		GrantTypesSupported:               []string{"authorization_code", "client_credentials"},
+		GrantTypesSupported:               []string{"authorization_code", "client_credentials", "refresh_token"},
 		IDTokenSigningAlgValuesSupported:  []string{"RS256"},
 		SubjectTypesSupported:             []string{"public"},
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post"},

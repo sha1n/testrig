@@ -25,6 +25,7 @@ func (i *Issuer) startServer(ctx context.Context) error {
 	}
 	i.privKey = priv
 	i.codeStore = newCodeStore(i.codeTTL)
+	i.refreshStore = newRefreshStore()
 	if i.userClaims == nil {
 		i.userClaims = make(map[string]map[string]any)
 	}
@@ -64,6 +65,7 @@ func (i *Issuer) stopServer(ctx context.Context) error {
 	i.baseURL = ""
 	i.privKey = nil
 	i.codeStore = nil
+	i.refreshStore = nil
 	i.userClaims = nil
 	return srv.Shutdown(ctx)
 }
