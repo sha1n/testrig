@@ -34,8 +34,7 @@ func (i *Issuer) startServer(ctx context.Context) error {
 	i.baseURL = "http://" + ln.Addr().String()
 
 	mux := http.NewServeMux()
-	// Routes are wired by handler files in later tasks; for now register
-	// only a sentinel 404 so the listener has a handler.
+	// Routes added by discovery/jwks/authorize/token handler files as tasks land.
 	i.registerRoutes(mux)
 
 	srv := &http.Server{
@@ -65,8 +64,7 @@ func (i *Issuer) stopServer(ctx context.Context) error {
 }
 
 // registerRoutes wires endpoint handlers onto the provided mux. Handlers
-// are added by the discovery/jwks/authorize/token files in their own
-// tasks; this stub is replaced as those land.
+// are added incrementally by Tasks 4, 5, 8, and 10.
 func (i *Issuer) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/openid-configuration", i.handleDiscovery)
 }
