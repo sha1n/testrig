@@ -3,8 +3,9 @@
 //
 //   - GET /.well-known/jwks.json          — single RSA public key (RS256)
 //   - GET /.well-known/openid-configuration — discovery doc
-//   - GET /authorize                      — auto-approving auth-code endpoint
-//   - POST /token                         — authorization_code + client_credentials
+//   - GET, POST /authorize                — auto-approving auth-code endpoint
+//   - POST /token                         — authorization_code + client_credentials + refresh_token
+//   - GET /userinfo                       — Bearer-authenticated user claims (OIDC §5.3)
 //
 // Behavior mirrors Auth0 on the points that matter for testing: per-request
 // audience (registered allow-list), id_token aud = client_id, access_token
@@ -61,6 +62,7 @@ type Issuer struct {
 	propIssuer       string
 	propJWKS         string
 	propDiscovery    string
+	propUserinfo     string
 	propClientID     string
 	propClientSecret string
 	propAudience     string
@@ -178,6 +180,10 @@ func (i *Issuer) WithClientSecretPropertyName(k string) *Issuer { i.propClientSe
 // property (the first allowed audience). Default: "<name>.audience".
 func (i *Issuer) WithAudiencePropertyName(k string) *Issuer { i.propAudience = k; return i }
 
+// WithUserinfoURLPropertyName overrides the published key for the /userinfo
+// URL property. Default: "<name>.userinfo_url".
+func (i *Issuer) WithUserinfoURLPropertyName(k string) *Issuer { i.propUserinfo = k; return i }
+
 // Name implements testrig.Service.
 func (i *Issuer) Name() string { return i.name }
 
@@ -253,6 +259,7 @@ func (i *Issuer) buildProperties() testrig.Properties {
 		keyOr(i.propIssuer, "issuer"):              i.IssuerURL(),
 		keyOr(i.propJWKS, "jwks_url"):              i.JWKSURL(),
 		keyOr(i.propDiscovery, "discovery_url"):    i.DiscoveryURL(),
+		keyOr(i.propUserinfo, "userinfo_url"):      i.UserinfoURL(),
 		keyOr(i.propClientID, "client_id"):         i.clientID,
 		keyOr(i.propClientSecret, "client_secret"): i.clientSecret,
 		keyOr(i.propAudience, "audience"):          audValue,

@@ -39,6 +39,7 @@ func TestStart_FullConfig_Succeeds(t *testing.T) {
 		WithIssuerURLPropertyName("ISSUER").
 		WithJWKSURLPropertyName("JWKS").
 		WithDiscoveryURLPropertyName("DISCOVERY").
+		WithUserinfoURLPropertyName("USERINFO").
 		WithClientIDPropertyName("CLIENT_ID").
 		WithClientSecretPropertyName("CLIENT_SECRET").
 		WithAudiencePropertyName("AUDIENCE")
@@ -270,6 +271,7 @@ func TestProperties_DefaultKeys_AllPresent(t *testing.T) {
 		"idp.issuer":        iss.IssuerURL(),
 		"idp.jwks_url":      iss.JWKSURL(),
 		"idp.discovery_url": iss.DiscoveryURL(),
+		"idp.userinfo_url":  iss.UserinfoURL(),
 		"idp.client_id":     iss.ClientID(),
 		"idp.client_secret": iss.ClientSecret(),
 		"idp.audience":      iss.AllowedAudiences()[0],
@@ -305,6 +307,7 @@ func TestProperties_OverrideKeys_TakeEffect(t *testing.T) {
 		WithIssuerURLPropertyName("ISSUER").
 		WithJWKSURLPropertyName("JWKS").
 		WithDiscoveryURLPropertyName("DISCOVERY").
+		WithUserinfoURLPropertyName("USERINFO").
 		WithClientIDPropertyName("CLIENT_ID").
 		WithClientSecretPropertyName("CLIENT_SECRET").
 		WithAudiencePropertyName("AUDIENCE")
@@ -317,6 +320,7 @@ func TestProperties_OverrideKeys_TakeEffect(t *testing.T) {
 		"ISSUER":        iss.IssuerURL(),
 		"JWKS":          iss.JWKSURL(),
 		"DISCOVERY":     iss.DiscoveryURL(),
+		"USERINFO":      iss.UserinfoURL(),
 		"CLIENT_ID":     iss.ClientID(),
 		"CLIENT_SECRET": iss.ClientSecret(),
 		"AUDIENCE":      iss.AllowedAudiences()[0],
@@ -332,7 +336,7 @@ func TestProperties_OverrideKeys_TakeEffect(t *testing.T) {
 		}
 	}
 	// Confirm default-named keys are NOT present.
-	for _, k := range []string{"idp.issuer", "idp.jwks_url", "idp.discovery_url", "idp.client_id", "idp.client_secret", "idp.audience"} {
+	for _, k := range []string{"idp.issuer", "idp.jwks_url", "idp.discovery_url", "idp.userinfo_url", "idp.client_id", "idp.client_secret", "idp.audience"} {
 		if _, ok := props[k]; ok {
 			t.Errorf("default key %q should be absent when override is set", k)
 		}

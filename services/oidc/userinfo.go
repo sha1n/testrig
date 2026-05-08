@@ -41,7 +41,12 @@ func (i *Issuer) handleUserinfo(w http.ResponseWriter, r *http.Request) {
 		writeBearerError(w, "invalid_token", "iss mismatch")
 		return
 	}
-	if aud, _ := claims["aud"].(string); !slices.Contains(i.allowedAudiences, aud) {
+	// Audience: jwt.Parse does not validate audience by default in v5
+	// (we'd need jwt.WithAudience(...), and it only takes a single value).
+	// We validate manually against the allowed-list. claims.GetAudience()
+	// handles both single-string and array-form aud claims robustly.
+	auds, err := claims.GetAudience()
+	if err != nil || !slices.ContainsFunc(auds, func(a string) bool { return slices.Contains(i.allowedAudiences, a) }) {
 		writeBearerError(w, "invalid_token", "aud not allowed")
 		return
 	}
