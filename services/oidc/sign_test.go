@@ -106,4 +106,3 @@ func TestSignFor_ResultingTokenVerifiesViaPublicKey(t *testing.T) {
 		t.Errorf("aud = %v, want test-api", claims["aud"])
 	}
 }
-
