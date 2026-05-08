@@ -218,6 +218,13 @@ func TestStart_RedirectURI_Duplicate(t *testing.T) {
 	})
 }
 
+func TestStart_RedirectURI_Whitespace(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithRedirectURIs("http://localhost/cb ") },
+		wantSub: "must not contain whitespace",
+	})
+}
+
 func TestStart_AudienceEmptyEntry_ReturnsError(t *testing.T) {
 	runValidationCase(t, validationCase{
 		apply:   func(i *oidc.Issuer) { i.WithAllowedAudiences("api", "") },
@@ -229,5 +236,12 @@ func TestStart_AudienceDuplicate_ReturnsError(t *testing.T) {
 	runValidationCase(t, validationCase{
 		apply:   func(i *oidc.Issuer) { i.WithAllowedAudiences("api", "api") },
 		wantSub: "is duplicated",
+	})
+}
+
+func TestStart_AudienceWhitespace_ReturnsError(t *testing.T) {
+	runValidationCase(t, validationCase{
+		apply:   func(i *oidc.Issuer) { i.WithAllowedAudiences("api", "bad api") },
+		wantSub: "must not contain whitespace",
 	})
 }

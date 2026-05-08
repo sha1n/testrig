@@ -3,6 +3,7 @@ package oidc
 import (
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 // validate runs the strict configuration validation pass before any defaults
@@ -46,6 +47,9 @@ func validateRedirectURIs(uris []string) error {
 		if raw == "" {
 			return fmt.Errorf("oidc: redirect_uri must not be empty")
 		}
+		if strings.ContainsAny(raw, " \t\r\n") {
+			return fmt.Errorf("oidc: redirect_uri %q must not contain whitespace", raw)
+		}
 		u, err := url.Parse(raw)
 		if err != nil {
 			return fmt.Errorf("oidc: redirect_uri %q is not a valid URL: %w", raw, err)
@@ -81,6 +85,9 @@ func validateAllowedAudiences(auds []string) error {
 	for _, a := range auds {
 		if a == "" {
 			return fmt.Errorf("oidc: audience must not be empty")
+		}
+		if strings.ContainsAny(a, " \t\r\n") {
+			return fmt.Errorf("oidc: audience %q must not contain whitespace", a)
 		}
 		if _, dup := seen[a]; dup {
 			return fmt.Errorf("oidc: audience %q is duplicated", a)
