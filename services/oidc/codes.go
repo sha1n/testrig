@@ -65,8 +65,10 @@ func (s *codeStore) consume(code string) (*codeRecord, string) {
 		return nil, "consumed"
 	}
 	if time.Now().After(rec.expiresAt) {
+		delete(s.records, code)
 		return nil, "expired"
 	}
 	rec.consumed = true
+	delete(s.records, code)
 	return rec, "ok"
 }
