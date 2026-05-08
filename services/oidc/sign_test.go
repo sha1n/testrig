@@ -1,8 +1,6 @@
 package oidc_test
 
 import (
-	"context"
-	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -70,10 +68,10 @@ func TestSign_DoesNotOverrideCallerClaims(t *testing.T) {
 func TestSignFor_ValidatesInputs(t *testing.T) {
 	iss := startMinimal(t)
 	cases := []struct {
-		name     string
-		sub, aud string
-		ttl      time.Duration
-		wantSub  string
+		name            string
+		sub, aud        string
+		ttl             time.Duration
+		wantErrContains string
 	}{
 		{"empty subject", "", "api", time.Minute, "subject must not be empty"},
 		{"empty audience", "alice", "", time.Minute, "audience must not be empty"},
@@ -83,8 +81,8 @@ func TestSignFor_ValidatesInputs(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := iss.SignFor(tc.sub, tc.aud, tc.ttl)
-			if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
-				t.Errorf("err=%v, want substring %q", err, tc.wantSub)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErrContains) {
+				t.Errorf("err=%v, want substring %q", err, tc.wantErrContains)
 			}
 		})
 	}
@@ -109,6 +107,3 @@ func TestSignFor_ResultingTokenVerifiesViaPublicKey(t *testing.T) {
 	}
 }
 
-// Avoid unused imports.
-var _ = context.Background
-var _ = slog.Default
