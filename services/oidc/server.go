@@ -70,6 +70,7 @@ func (i *Issuer) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /.well-known/openid-configuration", i.handleDiscovery)
 	mux.HandleFunc("GET /.well-known/jwks.json", i.handleJWKS)
 	mux.HandleFunc("GET /authorize", i.handleAuthorize)
+	mux.HandleFunc("POST /token", i.handleToken)
 }
 
 // generateRandomHex returns n random bytes as a lowercase hex string.
