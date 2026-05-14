@@ -1,48 +1,68 @@
 // Package main is a runnable end-to-end demo of integrating testrig with
-// a koanf-based application.
+// a koanf-based application. Layout mirrors the viper-app: thin entry point
+// that delegates to testenv.Setup and app.New + app.Run.
 //
-// Layout mirrors the viper-app: thin entry point that delegates to
-// testenv.Setup, config.Load, and sampleapp.New. See examples/viper-app
-// for a doc-comment-rich version.
+// See examples/viper-app for a doc-comment-rich version.
 package main
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"net/http"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/sha1n/testrig/examples/internal/sampleapp"
-	"github.com/sha1n/testrig/examples/koanf-app/config"
+	"github.com/sha1n/testrig/examples/internal/demo"
+	"github.com/sha1n/testrig/examples/koanf-app/app"
 	"github.com/sha1n/testrig/examples/koanf-app/testenv"
 )
 
-func main() {
-	ctx := context.Background()
+// listenHost is the loopback address the demo binds to and prints in the
+// ready-banner curl example. APP_PORT controls the port (set below).
+const listenHost = "127.0.0.1"
 
+// appPort is the port the demo listens on. Kept simple so the printed curl
+// command is copy-paste friendly.
+const appPort = "8080"
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	log.Println("🚀 Bringing up the koanf-app test environment...")
 	bundle, cleanup, err := testenv.Setup(ctx)
 	if err != nil {
-		log.Fatalf("setup: %v", err)
+		log.Fatalf("❌ test environment setup failed: %v", err)
 	}
 	defer cleanup()
-
-	overrides := bundle.Env.Properties()
-	overrides["APP_PORT"] = "8080"
-	cfg, err := config.Load(overrides)
-	if err != nil {
-		log.Fatalf("config: %v", err)
-	}
+	log.Println("✅ Test environment is up")
 
 	db, err := bundle.PG.DB(ctx)
 	if err != nil {
-		log.Fatalf("db: %v", err)
+		log.Fatalf("❌ could not open database: %v", err)
 	}
 	defer func() { _ = db.Close() }()
 
-	srv := sampleapp.New(db, cfg.RemoteURL)
-	log.Printf("listening on :%d (DATABASE_URL=%s, REMOTE_URL=%s)",
-		cfg.AppPort, cfg.DatabaseURL, cfg.RemoteURL)
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.AppPort), srv.Handler()); err != nil {
-		log.Fatal(err)
+	overrides := bundle.Env.Properties()
+	overrides["APP_PORT"] = appPort
+
+	log.Println("🔧 Wiring the application...")
+	wired, err := app.New(overrides, db)
+	if err != nil {
+		log.Fatalf("❌ application wiring failed: %v", err)
 	}
+
+	lis, err := net.Listen("tcp", wired.Addr())
+	if err != nil {
+		log.Fatalf("❌ could not listen on %s: %v", wired.Addr(), err)
+	}
+	log.Printf("🌐 HTTP server listening on %s", lis.Addr())
+
+	demo.PrintReadyBanner(listenHost+":"+appPort, bundle.Issuer, wired.Audience(), bundle.WM.Client())
+
+	if err := wired.Run(ctx, lis); err != nil {
+		log.Fatalf("❌ server stopped with error: %v", err)
+	}
+	log.Println("👋 Bye!")
 }

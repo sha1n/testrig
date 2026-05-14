@@ -20,9 +20,11 @@ import (
 
 const schemaDDL = `
 CREATE TABLE IF NOT EXISTS responses (
-    key        TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    key        TEXT NOT NULL,
     response   TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, key)
 )`
 
 // SchemaSeed implements testrig.Service. Construct with New, register
