@@ -13,40 +13,56 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/sha1n/testrig/examples/internal/demo"
 	"github.com/sha1n/testrig/examples/koanf-app/app"
 	"github.com/sha1n/testrig/examples/koanf-app/testenv"
 )
+
+// listenHost is the loopback address the demo binds to and prints in the
+// ready-banner curl example. APP_PORT controls the port (set below).
+const listenHost = "127.0.0.1"
+
+// appPort is the port the demo listens on. Kept simple so the printed curl
+// command is copy-paste friendly.
+const appPort = "8080"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	log.Println("🚀 Bringing up the koanf-app test environment...")
 	bundle, cleanup, err := testenv.Setup(ctx)
 	if err != nil {
-		log.Fatalf("setup: %v", err)
+		log.Fatalf("❌ test environment setup failed: %v", err)
 	}
 	defer cleanup()
+	log.Println("✅ Test environment is up")
 
 	db, err := bundle.PG.DB(ctx)
 	if err != nil {
-		log.Fatalf("db: %v", err)
+		log.Fatalf("❌ could not open database: %v", err)
 	}
 	defer func() { _ = db.Close() }()
 
 	overrides := bundle.Env.Properties()
-	overrides["APP_PORT"] = "8080"
+	overrides["APP_PORT"] = appPort
 
+	log.Println("🔧 Wiring the application...")
 	wired, err := app.New(overrides, db)
 	if err != nil {
-		log.Fatalf("app: %v", err)
+		log.Fatalf("❌ application wiring failed: %v", err)
 	}
 
 	lis, err := net.Listen("tcp", wired.Addr())
 	if err != nil {
-		log.Fatalf("listen %s: %v", wired.Addr(), err)
+		log.Fatalf("❌ could not listen on %s: %v", wired.Addr(), err)
 	}
-	log.Printf("listening on %s", lis.Addr())
+	log.Printf("🌐 HTTP server listening on %s", lis.Addr())
+
+	demo.PrintReadyBanner(listenHost+":"+appPort, bundle.Issuer, wired.Audience())
+
 	if err := wired.Run(ctx, lis); err != nil {
-		log.Fatal(err)
+		log.Fatalf("❌ server stopped with error: %v", err)
 	}
+	log.Println("👋 Bye!")
 }
