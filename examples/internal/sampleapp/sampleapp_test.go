@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 	sharedEnv = testrig.New("sampleapp-test").
 		WithStages(testrig.NewStages(pgSvc).Then(seedSvc))
 
-	if err := sharedEnv.Start(ctx); err != nil {
+	if _, err := sharedEnv.Start(ctx); err != nil {
 		log.Fatalf("env.Start: %v", err)
 	}
 

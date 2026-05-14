@@ -33,7 +33,7 @@ func Setup(ctx context.Context) (*Bundle, func(), error) {
 		WithStages(testrig.NewStages(pg).Then(seedSvc)).
 		With(wm)
 
-	if err := env.Start(ctx); err != nil {
+	if _, err := env.Start(ctx); err != nil {
 		return nil, nil, fmt.Errorf("env.Start: %w", err)
 	}
 	cleanup := func() { _ = env.Stop(context.Background()) }

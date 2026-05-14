@@ -18,12 +18,12 @@ func TestSchemaSeed_AppliesSchema(t *testing.T) {
 	env := testrig.New("seed-test").
 		WithStages(testrig.NewStages(pg).Then(s))
 
-	if err := env.Start(context.Background()); err != nil {
+	props, err := env.Start(context.Background())
+	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
 
-	props := env.Properties()
 	if props["seed.applied"] != "true" {
 		t.Errorf("expected seed.applied=true, got %q", props["seed.applied"])
 	}
@@ -73,7 +73,7 @@ func TestSchemaSeed_Idempotent(t *testing.T) {
 		WithStages(testrig.NewStages(pg).Then(s))
 
 	// First start.
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("first Start failed: %v", err)
 	}
 	if err := env.Stop(context.Background()); err != nil {
@@ -81,7 +81,7 @@ func TestSchemaSeed_Idempotent(t *testing.T) {
 	}
 
 	// Second start against the same container — should not fail.
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("second Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
