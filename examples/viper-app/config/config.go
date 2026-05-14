@@ -11,9 +11,12 @@ import (
 // Config is the typed application config. Production code reads it the
 // same way demo/test code does — Viper handles the source.
 type Config struct {
-	AppPort     int    `mapstructure:"APP_PORT"`
-	DatabaseURL string `mapstructure:"DATABASE_URL"`
-	RemoteURL   string `mapstructure:"REMOTE_URL"`
+	AppPort       int    `mapstructure:"APP_PORT"`
+	DatabaseURL   string `mapstructure:"DATABASE_URL"`
+	RemoteURL     string `mapstructure:"REMOTE_URL"`
+	OIDCIssuerURL string `mapstructure:"OIDC_ISSUER_URL"`
+	OIDCJWKSURL   string `mapstructure:"OIDC_JWKS_URL"`
+	OIDCAudience  string `mapstructure:"OIDC_AUDIENCE"`
 }
 
 // Load builds a Config using Viper. Environment variables are read first;
@@ -40,6 +43,15 @@ func Load(overrides map[string]string) (*Config, error) {
 	}
 	if cfg.RemoteURL == "" {
 		return nil, fmt.Errorf("REMOTE_URL is required")
+	}
+	if cfg.OIDCIssuerURL == "" {
+		return nil, fmt.Errorf("OIDC_ISSUER_URL is required")
+	}
+	if cfg.OIDCJWKSURL == "" {
+		return nil, fmt.Errorf("OIDC_JWKS_URL is required")
+	}
+	if cfg.OIDCAudience == "" {
+		return nil, fmt.Errorf("OIDC_AUDIENCE is required")
 	}
 	return &cfg, nil
 }

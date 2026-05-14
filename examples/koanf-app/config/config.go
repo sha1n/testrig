@@ -12,9 +12,12 @@ import (
 
 // Config is the typed application config.
 type Config struct {
-	AppPort     int    `koanf:"app_port"`
-	DatabaseURL string `koanf:"database_url"`
-	RemoteURL   string `koanf:"remote_url"`
+	AppPort       int    `koanf:"app_port"`
+	DatabaseURL   string `koanf:"database_url"`
+	RemoteURL     string `koanf:"remote_url"`
+	OIDCIssuerURL string `koanf:"oidc_issuer_url"`
+	OIDCJWKSURL   string `koanf:"oidc_jwks_url"`
+	OIDCAudience  string `koanf:"oidc_audience"`
 }
 
 // Load builds a Config using koanf. Environment variables load first;
@@ -49,6 +52,15 @@ func Load(overrides map[string]string) (*Config, error) {
 	}
 	if cfg.RemoteURL == "" {
 		return nil, fmt.Errorf("REMOTE_URL is required")
+	}
+	if cfg.OIDCIssuerURL == "" {
+		return nil, fmt.Errorf("OIDC_ISSUER_URL is required")
+	}
+	if cfg.OIDCJWKSURL == "" {
+		return nil, fmt.Errorf("OIDC_JWKS_URL is required")
+	}
+	if cfg.OIDCAudience == "" {
+		return nil, fmt.Errorf("OIDC_AUDIENCE is required")
 	}
 	return &cfg, nil
 }

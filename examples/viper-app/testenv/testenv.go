@@ -9,21 +9,27 @@ import (
 
 	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/examples/internal/seed"
+	"github.com/sha1n/testrig/services/oidc"
 	"github.com/sha1n/testrig/services/postgres"
 	"github.com/sha1n/testrig/services/wiremock"
 )
 
+// Audience is the OAuth audience the OIDC issuer accepts and the app's
+// middleware validates against. Exposed so tests can mint tokens for it.
+const Audience = "example-api"
+
 // Bundle is the result of Setup: the running env plus typed handles to
 // each service the app cares about.
 type Bundle struct {
-	Env  *testrig.Env
-	PG   *postgres.Postgres
-	WM   *wiremock.WireMock
-	Seed *seed.SchemaSeed
+	Env    *testrig.Env
+	PG     *postgres.Postgres
+	WM     *wiremock.WireMock
+	Seed   *seed.SchemaSeed
+	Issuer *oidc.Issuer
 }
 
-// Setup brings up Postgres + SchemaSeed (in a single ordered track) and
-// WireMock (in a parallel track), and returns the bundle plus a cleanup
+// Setup brings up Postgres + SchemaSeed (ordered), plus WireMock and an
+// in-process OIDC issuer (parallel), and returns the bundle plus a cleanup
 // function. Cleanup is idempotent.
 func Setup(ctx context.Context) (*Bundle, func(), error) {
 	pg := postgres.New("pg").
@@ -31,15 +37,21 @@ func Setup(ctx context.Context) (*Bundle, func(), error) {
 		WithDSNPropertyName("DATABASE_URL")
 	wm := wiremock.New("wm").
 		WithURLPropertyName("REMOTE_URL")
+	issuer := oidc.New("idp").
+		WithAllowedAudiences(Audience).
+		WithIssuerURLPropertyName("OIDC_ISSUER_URL").
+		WithJWKSURLPropertyName("OIDC_JWKS_URL").
+		WithAudiencePropertyName("OIDC_AUDIENCE")
 	seedSvc := seed.New(pg)
 
 	env := testrig.New("viper-app").
 		WithStages(testrig.NewStages(pg).Then(seedSvc)).
-		With(wm)
+		With(wm).
+		With(issuer)
 
 	if _, err := env.Start(ctx); err != nil {
 		return nil, nil, fmt.Errorf("env.Start: %w", err)
 	}
 	cleanup := func() { _ = env.Stop(context.Background()) }
-	return &Bundle{Env: env, PG: pg, WM: wm, Seed: seedSvc}, cleanup, nil
+	return &Bundle{Env: env, PG: pg, WM: wm, Seed: seedSvc, Issuer: issuer}, cleanup, nil
 }
