@@ -94,7 +94,7 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: |
           PKGS=$(go list ./... 2>/dev/null || true)
-          if [ -n "$PKGS" ]; then go test -race -coverprofile=coverage.out ./...; else echo "No packages to test."; fi
+          if [ -n "$PKGS" ]; then go test -race -coverprofile=coverage.out -coverpkg=./... ./...; else echo "No packages to test."; fi
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

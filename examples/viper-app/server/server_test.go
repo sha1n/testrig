@@ -143,3 +143,66 @@ func TestSchemaSeed_AppliedDuringSetup(t *testing.T) {
 		t.Errorf("expected seed.applied=true, got %q", props["seed.applied"])
 	}
 }
+
+// TestLookupEndpoint_MissingKey_Returns400 verifies that GET /lookup without
+// a key query parameter is rejected before touching the database.
+func TestLookupEndpoint_MissingKey_Returns400(t *testing.T) {
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/lookup") // no ?key=
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// TestSaveEndpoint_UpsertExistingKey posts the same key twice with different
+// WireMock stubs and verifies the stored value is updated to the second body.
+// This exercises the ON CONFLICT … DO UPDATE path in the store layer.
+func TestSaveEndpoint_UpsertExistingKey(t *testing.T) {
+	resetWireMock(t)
+
+	const key = "upsert-viper"
+	const first = `{"v":1}`
+	const second = `{"v":2}`
+
+	stub := func(body string) {
+		require.NoError(t, bundle.WM.Client().StubFor(
+			wiremock.Get(wiremock.URLPathEqualTo("/lookup")).
+				WithQueryParam("key", wiremock.EqualTo(key)).
+				WillReturnResponse(wiremock.NewResponse().
+					WithStatus(http.StatusOK).
+					WithBody(body)),
+		))
+	}
+
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	// First save.
+	stub(first)
+	resp, err := http.Post(srv.URL+"/save?key="+key, "", nil)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+	require.Eventually(t, func() bool {
+		var got string
+		err := db.QueryRow(`SELECT response FROM responses WHERE key = $1`, key).Scan(&got)
+		return err == nil && got == first
+	}, 10*time.Second, 10*time.Millisecond, "first row for %q did not appear", key)
+
+	// Reset stubs and save again with a different body.
+	resetWireMock(t)
+	stub(second)
+	resp2, err := http.Post(srv.URL+"/save?key="+key, "", nil)
+	require.NoError(t, err)
+	_ = resp2.Body.Close()
+	require.Equal(t, http.StatusAccepted, resp2.StatusCode)
+
+	require.Eventually(t, func() bool {
+		var got string
+		err := db.QueryRow(`SELECT response FROM responses WHERE key = $1`, key).Scan(&got)
+		return err == nil && got == second
+	}, 10*time.Second, 10*time.Millisecond, "row for %q was not updated to second value", key)
+}
