@@ -13,6 +13,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/services/oidc"
 )
 
@@ -160,7 +161,7 @@ func TestJWKS_KIDMatchesConfig(t *testing.T) {
 		WithKeyID("custom-kid-1").
 		WithRedirectURIs("http://localhost/cb").
 		WithAllowedAudiences("api")
-	if _, err := iss.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() { _ = iss.Stop(context.Background()) })

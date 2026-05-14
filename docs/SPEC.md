@@ -59,7 +59,7 @@ A flat key/value map produced by services as they start. Services publish their 
 ```go
 type Service interface {
     Name() string
-    Start(ctx context.Context, logger *slog.Logger) (Properties, error)
+    Start(ctx context.Context, env EnvHandle) (Properties, error)
     Stop(ctx context.Context) error
 }
 ```
@@ -67,8 +67,26 @@ type Service interface {
 A `Service` is a stateful dependency with a lifecycle. The framework calls `Start` for every service and `Stop` for every service whose `Start` returned without error. Within a stage, services start (and stop) concurrently; see `Stages` below for opt-in ordering across groups of services.
 
 - `Name()` — unique within the environment; used in logs.
-- `Start` returns the properties this service contributes to the shared `Properties` map. Sibling services within the same stage cannot observe each other's published properties; cross-service wiring belongs either in a later stage or in test setup code between `env.Start` and the assertions.
+- `Start` receives an `EnvHandle` exposing the env name, a service-scoped logger, and a snapshot of properties accumulated so far. It returns the properties this service contributes to the shared `Properties` map. Sibling services within the same stage cannot observe each other's published properties; properties from services in earlier stages of the same track are visible via `env.Properties()`.
 - A `Service` is owned by the `Env` it was added to; passing the same instance to multiple Envs is a programmer error.
+
+### `EnvHandle`
+
+```go
+type EnvHandle interface {
+    Name() string
+    Logger() *slog.Logger
+    Properties() Properties
+}
+```
+
+The read access surface passed to each `Service.Start`. Methods are independent reads:
+
+- `Name()` returns the env's display name (same as `Env.Name()`).
+- `Logger()` returns a logger scoped to the calling service (`service=<name>` attribute attached).
+- `Properties()` returns a snapshot of the env's properties at this moment. The returned map is owned by the caller; mutating it has no effect on the env. Properties from services in earlier stages of the same track are guaranteed to be visible; properties from services running concurrently in the same stage are not.
+
+`StubEnvHandle(name, logger, props)` is a public test helper that returns a fixed `EnvHandle` — intended for standalone tests of `Service` implementations. A nil logger falls back to `slog.Default()`; the properties map is snapshotted on construction.
 
 ### `Env`
 
@@ -156,7 +174,7 @@ On `Stop`, stages within a track tear down in **reverse order** (last stage firs
 
 ### Per-service logger
 
-`Env` scopes its logger with `service=<name>` before passing it to each `Service.Start`. Services that want a deeper child can compose with the standard library directly: `logger.With("subscope", "x")`.
+`Env` exposes a service-scoped logger via `env.Logger()` on the `EnvHandle` passed to each `Service.Start`. Each scoped logger carries a `service=<name>` attribute. Services that want a deeper child can compose with the standard library directly: `env.Logger().With("subscope", "x")`.
 
 ## Property Injection Patterns
 
@@ -213,7 +231,7 @@ A WireMock service backed by testcontainers-go.
 ## Concurrency & Safety
 
 - All configuration is applied via the fluent builder before `Start`; mutating the env (or calling `Start` again) while it is running is a programmer error and is rejected by the state machine.
-- Tracks are started concurrently using `errgroup`. Within a track, stages run sequentially; within a stage, services start concurrently. Each `Service.Start` receives its own scoped logger.
+- Tracks are started concurrently using `errgroup`. Within a track, stages run sequentially; within a stage, services start concurrently. Each `Service.Start` receives its own `EnvHandle` with a service-scoped logger.
 - The aggregated `Properties` map is guarded by an internal `sync.RWMutex`; `env.Properties()` returns a snapshot copy.
 - `Stop` runs tracks concurrently and reverses stage order within each track.
 

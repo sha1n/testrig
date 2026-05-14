@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/services/oidc"
 )
 
@@ -14,7 +15,7 @@ func TestStart_MinimalConfig_Succeeds(t *testing.T) {
 	iss := oidc.New("idp").
 		WithRedirectURIs("http://localhost:8080/cb").
 		WithAllowedAudiences("api")
-	props, err := iss.Start(context.Background(), slog.Default())
+	props, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestStart_FullConfig_Succeeds(t *testing.T) {
 		WithClientIDPropertyName("CLIENT_ID").
 		WithClientSecretPropertyName("CLIENT_SECRET").
 		WithAudiencePropertyName("AUDIENCE")
-	if _, err := iss.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = iss.Stop(context.Background()) }()
@@ -51,7 +52,7 @@ func TestStart_FullConfig_Succeeds(t *testing.T) {
 
 func TestStart_StartTwice_ReturnsError(t *testing.T) {
 	iss := startMinimal(t)
-	_, err := iss.Start(context.Background(), slog.Default())
+	_, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err == nil {
 		t.Fatal("expected error on second Start, got nil")
 	}
@@ -64,13 +65,13 @@ func TestStop_StopThenStart_Succeeds(t *testing.T) {
 	iss := oidc.New("idp").
 		WithRedirectURIs("http://localhost:8080/cb").
 		WithAllowedAudiences("api")
-	if _, err := iss.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
 	if err := iss.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	if _, err := iss.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
 	defer func() { _ = iss.Stop(context.Background()) }()
@@ -110,7 +111,7 @@ func runValidationCase(t *testing.T, tc validationCase) {
 	t.Helper()
 	iss := oidc.New("idp")
 	tc.apply(iss)
-	_, err := iss.Start(context.Background(), slog.Default())
+	_, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err == nil {
 		t.Fatalf("expected error containing %q, got nil", tc.wantSub)
 	}
@@ -122,7 +123,7 @@ func runValidationCase(t *testing.T, tc validationCase) {
 
 func TestStart_EmptyName_ReturnsError(t *testing.T) {
 	iss := oidc.New("")
-	_, err := iss.Start(context.Background(), slog.Default())
+	_, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err == nil || !strings.Contains(err.Error(), "name must not be empty") {
 		t.Errorf("expected name-empty error, got %v", err)
 	}
@@ -269,7 +270,7 @@ func TestProperties_DefaultKeys_AllPresent(t *testing.T) {
 	iss := oidc.New("idp").
 		WithRedirectURIs("http://localhost/cb").
 		WithAllowedAudiences("test-api")
-	props, err := iss.Start(context.Background(), slog.Default())
+	props, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -297,7 +298,7 @@ func TestProperties_DefaultKeys_AllPresent(t *testing.T) {
 
 func TestProperties_AudienceProperty_EmptyWhenNoAllowedAudiences(t *testing.T) {
 	iss := oidc.New("idp").WithRedirectURIs("http://localhost/cb")
-	props, err := iss.Start(context.Background(), slog.Default())
+	props, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -318,7 +319,7 @@ func TestProperties_OverrideKeys_TakeEffect(t *testing.T) {
 		WithClientIDPropertyName("CLIENT_ID").
 		WithClientSecretPropertyName("CLIENT_SECRET").
 		WithAudiencePropertyName("AUDIENCE")
-	props, err := iss.Start(context.Background(), slog.Default())
+	props, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

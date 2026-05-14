@@ -13,7 +13,6 @@ package seed
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/services/postgres"
@@ -44,8 +43,8 @@ func (s *SchemaSeed) Name() string { return s.name }
 // Start opens a connection to the Postgres service and applies the schema.
 // Publishes the property "seed.applied" = "true" so tests can assert that
 // the service ran.
-func (s *SchemaSeed) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
-	logger.Info("applying schema")
+func (s *SchemaSeed) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Properties, error) {
+	env.Logger().Info("applying schema")
 	db, err := s.pg.DB(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("seed: open postgres: %w", err)

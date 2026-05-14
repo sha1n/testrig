@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/services/wiremock"
 )
 
@@ -16,7 +17,7 @@ func TestWireMock_Defaults(t *testing.T) {
 		t.Errorf("Unexpected name: %s", tk.Name())
 	}
 
-	props, err := tk.Start(context.Background(), slog.Default())
+	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -33,7 +34,7 @@ func TestWireMock_Configured(t *testing.T) {
 		WithImage("wiremock/wiremock").
 		WithTag("3.3.1")
 
-	props, err := tk.Start(context.Background(), slog.Default())
+	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -47,7 +48,7 @@ func TestWireMock_Configured(t *testing.T) {
 func TestWireMock_URLPropertyName_Override(t *testing.T) {
 	tk := wiremock.New("wm").WithURLPropertyName("MOCK_URL")
 
-	props, err := tk.Start(context.Background(), slog.Default())
+	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -63,12 +64,12 @@ func TestWireMock_URLPropertyName_Override(t *testing.T) {
 
 func TestWireMock_StartTwice_ReturnsError(t *testing.T) {
 	tk := wiremock.New("twice")
-	if _, err := tk.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("First Start failed: %v", err)
 	}
 	defer func() { _ = tk.Stop(context.Background()) }()
 
-	if _, err := tk.Start(context.Background(), slog.Default()); err == nil {
+	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err == nil {
 		t.Error("Expected error on second Start")
 	}
 }
@@ -80,13 +81,13 @@ func TestWireMock_StopThenStart_Succeeds(t *testing.T) {
 	tk := wiremock.New("restart-test")
 	ctx := context.Background()
 
-	if _, err := tk.Start(ctx, slog.Default()); err != nil {
+	if _, err := tk.Start(ctx, testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("first Start failed: %v", err)
 	}
 	if err := tk.Stop(ctx); err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}
-	if _, err := tk.Start(ctx, slog.Default()); err != nil {
+	if _, err := tk.Start(ctx, testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("second Start after Stop must succeed; got: %v", err)
 	}
 	if err := tk.Stop(ctx); err != nil {
@@ -96,7 +97,7 @@ func TestWireMock_StopThenStart_Succeeds(t *testing.T) {
 
 func TestWireMock_Start_Error(t *testing.T) {
 	tk := wiremock.New("err-wm").WithImage("non-existent-image-12345")
-	_, err := tk.Start(context.Background(), slog.Default())
+	_, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err == nil {
 		t.Error("Expected error for non-existent image")
 	}
@@ -112,7 +113,7 @@ func TestWireMock_Stop_NoContainer(t *testing.T) {
 func TestWireMock_URL_MatchesProperty(t *testing.T) {
 	tk := wiremock.New("url-match")
 
-	props, err := tk.Start(context.Background(), slog.Default())
+	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestWireMock_URL_MatchesProperty(t *testing.T) {
 func TestWireMock_Client_NotNil(t *testing.T) {
 	tk := wiremock.New("client-test")
 
-	if _, err := tk.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = tk.Stop(context.Background()) }()

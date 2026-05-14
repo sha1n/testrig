@@ -199,7 +199,7 @@ func (i *Issuer) WithUserinfoURLPropertyName(k string) *Issuer { i.propUserinfo 
 func (i *Issuer) Name() string { return i.name }
 
 // Start implements testrig.Service.
-func (i *Issuer) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
+func (i *Issuer) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Properties, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
@@ -245,7 +245,7 @@ func (i *Issuer) Start(ctx context.Context, logger *slog.Logger) (testrig.Proper
 		i.refreshTokenTTL = 30 * 24 * time.Hour
 	}
 
-	i.logger = logger
+	i.logger = env.Logger()
 	i.logger.Info("🎬 Starting OIDC issuer service", "name", i.name)
 
 	if err := i.startServer(ctx); err != nil {

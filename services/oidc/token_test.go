@@ -15,6 +15,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/services/oidc"
 )
 
@@ -431,7 +432,7 @@ func TestToken_AuthCode_ExpiredCode_InvalidGrant(t *testing.T) {
 		WithRedirectURIs("http://localhost:8080/callback").
 		WithAllowedAudiences("test-api").
 		WithCodeTTL(50 * time.Millisecond)
-	if _, err := iss.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() { _ = iss.Stop(context.Background()) })

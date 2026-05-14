@@ -170,8 +170,8 @@ func (e *Env) runTrack(ctx context.Context, trackIdx int, track *Stages) error {
 		for _, svc := range stage {
 			svc := svc
 			sg.Go(func() error {
-				svcLogger := scopedLogger(e.logger, svc.Name())
-				props, err := svc.Start(sgctx, svcLogger)
+				handle := &envHandle{env: e, name: svc.Name()}
+				props, err := svc.Start(sgctx, handle)
 				if err != nil {
 					return fmt.Errorf("failed to start service %s: %w", svc.Name(), err)
 				}

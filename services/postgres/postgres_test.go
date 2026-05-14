@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/services/postgres"
 )
 
@@ -16,7 +17,7 @@ func TestPostgres_Defaults(t *testing.T) {
 		t.Errorf("Unexpected name: %s", tk.Name())
 	}
 
-	props, err := tk.Start(context.Background(), slog.Default())
+	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestPostgres_Configured(t *testing.T) {
 		t.Errorf("Unexpected name: %s", tk.Name())
 	}
 
-	props, err := tk.Start(context.Background(), slog.Default())
+	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -82,7 +83,7 @@ func TestPostgres_Configured(t *testing.T) {
 func TestPostgres_DSNProperty_URLEncodesSpecialChars(t *testing.T) {
 	tk := postgres.New("special").WithPassword("p@ss/word:1")
 
-	props, err := tk.Start(context.Background(), slog.Default())
+	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestPostgres_PropertyNameOverrides(t *testing.T) {
 		WithPasswordPropertyName("DB_PASSWORD").
 		WithDatabasePropertyName("DB_NAME")
 
-	props, err := tk.Start(context.Background(), slog.Default())
+	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -140,12 +141,12 @@ func TestPostgres_PropertyNameOverrides(t *testing.T) {
 
 func TestPostgres_StartTwice_ReturnsError(t *testing.T) {
 	tk := postgres.New("twice")
-	if _, err := tk.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("First Start failed: %v", err)
 	}
 	defer func() { _ = tk.Stop(context.Background()) }()
 
-	if _, err := tk.Start(context.Background(), slog.Default()); err == nil {
+	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err == nil {
 		t.Error("Expected error on second Start")
 	}
 }
@@ -157,13 +158,13 @@ func TestPostgres_StopThenStart_Succeeds(t *testing.T) {
 	tk := postgres.New("restart-test")
 	ctx := context.Background()
 
-	if _, err := tk.Start(ctx, slog.Default()); err != nil {
+	if _, err := tk.Start(ctx, testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("first Start failed: %v", err)
 	}
 	if err := tk.Stop(ctx); err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}
-	if _, err := tk.Start(ctx, slog.Default()); err != nil {
+	if _, err := tk.Start(ctx, testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("second Start after Stop must succeed; got: %v", err)
 	}
 	if err := tk.Stop(ctx); err != nil {
@@ -173,7 +174,7 @@ func TestPostgres_StopThenStart_Succeeds(t *testing.T) {
 
 func TestPostgres_Start_Error(t *testing.T) {
 	tk := postgres.New("err-db").WithImage("non-existent-image-12345")
-	_, err := tk.Start(context.Background(), slog.Default())
+	_, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err == nil {
 		t.Error("Expected error for non-existent image")
 	}
@@ -189,7 +190,7 @@ func TestPostgres_Stop_NoContainer(t *testing.T) {
 func TestPostgres_DSN_MatchesProperty(t *testing.T) {
 	tk := postgres.New("dsn-match").WithPassword("p@ss/word:1")
 
-	props, err := tk.Start(context.Background(), slog.Default())
+	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestPostgres_DSN_MatchesProperty(t *testing.T) {
 func TestPostgres_DB_PingsAndReturnsConnection(t *testing.T) {
 	tk := postgres.New("db-test")
 
-	if _, err := tk.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = tk.Stop(context.Background()) }()
@@ -226,7 +227,7 @@ func TestPostgres_DB_PingError_PropagatesContextCancel(t *testing.T) {
 	// DB() Pings before returning — verify a cancelled context surfaces as
 	// an error from DB() rather than a deferred dial failure on first query.
 	tk := postgres.New("db-ping-fail")
-	if _, err := tk.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = tk.Stop(context.Background()) }()

@@ -77,11 +77,11 @@ func (t *WireMock) Name() string { return t.name }
 
 // Start implements testrig.Service. Returns an error if called while a
 // previous Start is still active (i.e. Stop has not been called).
-func (t *WireMock) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
+func (t *WireMock) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Properties, error) {
 	if t.container != nil {
 		return nil, fmt.Errorf("wiremock service %q already started", t.name)
 	}
-	t.logger = logger
+	t.logger = env.Logger()
 	t.logger.Info("🎬 Starting WireMock service", "name", t.name)
 
 	container, err := testcontainers.Run(ctx,
