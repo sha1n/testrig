@@ -17,19 +17,20 @@ import (
 // --- Mocks ---
 
 type MockService struct {
-	name       string
-	startErr   error
-	stopErr    error
-	startDelay time.Duration
-	stopDelay  time.Duration
-	properties testrig.Properties
-	onStart    func()
-	onStop     func()
+	name          string
+	startErr      error
+	stopErr       error
+	startDelay    time.Duration
+	stopDelay     time.Duration
+	properties    testrig.Properties
+	onStart       func()
+	onStartHandle func(env testrig.EnvHandle)
+	onStop        func()
 }
 
 func (m *MockService) Name() string { return m.name }
 
-func (m *MockService) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
+func (m *MockService) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Properties, error) {
 	if m.startDelay > 0 {
 		select {
 		case <-time.After(m.startDelay):
@@ -39,6 +40,9 @@ func (m *MockService) Start(ctx context.Context, logger *slog.Logger) (testrig.P
 	}
 	if m.onStart != nil {
 		m.onStart()
+	}
+	if m.onStartHandle != nil {
+		m.onStartHandle(env)
 	}
 	if m.startErr != nil {
 		return nil, m.startErr
@@ -399,8 +403,8 @@ type loggerCapturingService struct {
 	capturedLogger *slog.Logger
 }
 
-func (s *loggerCapturingService) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
-	s.capturedLogger = logger
+func (s *loggerCapturingService) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Properties, error) {
+	s.capturedLogger = env.Logger()
 	return nil, nil
 }
 
@@ -779,5 +783,200 @@ func asString(v any) string {
 		return x.Error()
 	default:
 		return ""
+	}
+}
+
+// --- EnvHandle tests ---
+
+func TestEnvHandle_NameAvailableToService(t *testing.T) {
+	var captured string
+	svc := &MockService{
+		name: "svc",
+		onStartHandle: func(env testrig.EnvHandle) {
+			captured = env.Name()
+		},
+	}
+
+	env := testrig.New("my-env").With(svc)
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	if captured != "my-env" {
+		t.Errorf("env.Name() inside Start = %q, want %q", captured, "my-env")
+	}
+}
+
+func TestEnvHandle_LoggerIsServiceScoped(t *testing.T) {
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	svc := &MockService{
+		name: "scoped-svc",
+		onStartHandle: func(env testrig.EnvHandle) {
+			env.Logger().Info("hello")
+		},
+	}
+
+	env := testrig.New("test").With(svc).WithLogger(logger)
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	out := buf.String()
+	if !strings.Contains(out, "service=scoped-svc") {
+		t.Errorf("expected logger output to carry service=scoped-svc attribute, got: %s", out)
+	}
+}
+
+func TestEnvHandle_PropertiesEmptyAtFirstStage(t *testing.T) {
+	var captured testrig.Properties
+	svc := &MockService{
+		name: "svc",
+		onStartHandle: func(env testrig.EnvHandle) {
+			captured = env.Properties()
+		},
+	}
+
+	env := testrig.New("test").With(svc)
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	if captured == nil {
+		t.Fatal("env.Properties() should not return nil")
+	}
+	if len(captured) != 0 {
+		t.Errorf("first-stage service should see empty Properties, got %v", captured)
+	}
+}
+
+func TestEnvHandle_PropertiesVisibility_LaterStageSeesEarlierStage(t *testing.T) {
+	stage1 := &MockService{
+		name:       "stage1",
+		properties: testrig.Properties{"stage1.key": "stage1.value"},
+	}
+	var captured testrig.Properties
+	stage2 := &MockService{
+		name: "stage2",
+		onStartHandle: func(env testrig.EnvHandle) {
+			captured = env.Properties()
+		},
+	}
+
+	env := testrig.New("test").WithStages(testrig.NewStages(stage1).Then(stage2))
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	if captured["stage1.key"] != "stage1.value" {
+		t.Errorf("stage2 should see stage1's property, got %v", captured)
+	}
+}
+
+func TestEnvHandle_PropertiesIsSnapshot_MutationDoesNotLeak(t *testing.T) {
+	stage1 := &MockService{
+		name:       "stage1",
+		properties: testrig.Properties{"k": "v"},
+	}
+	stage2 := &MockService{
+		name: "stage2",
+		onStartHandle: func(env testrig.EnvHandle) {
+			props := env.Properties()
+			props["k"] = "MUTATED"
+			props["intruder"] = "x"
+		},
+	}
+
+	env := testrig.New("test").WithStages(testrig.NewStages(stage1).Then(stage2))
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	envProps := env.Properties()
+	if envProps["k"] != "v" {
+		t.Errorf("env's properties leaked from snapshot mutation: %v", envProps)
+	}
+	if _, ok := envProps["intruder"]; ok {
+		t.Errorf("env's properties contain intruder key from snapshot mutation: %v", envProps)
+	}
+}
+
+// --- StubEnvHandle tests ---
+
+func TestStubEnvHandle_ReturnsProvidedValues(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	props := testrig.Properties{"a": "1"}
+
+	h := testrig.StubEnvHandle("env-name", logger, props)
+
+	if h.Name() != "env-name" {
+		t.Errorf("Name() = %q, want %q", h.Name(), "env-name")
+	}
+	if h.Logger() != logger {
+		t.Errorf("Logger() did not return the provided logger")
+	}
+	got := h.Properties()
+	if got["a"] != "1" {
+		t.Errorf("Properties() = %v, want a=1", got)
+	}
+}
+
+func TestStubEnvHandle_NilLoggerFallsBackToDefault(t *testing.T) {
+	h := testrig.StubEnvHandle("env", nil, nil)
+	if h.Logger() == nil {
+		t.Fatal("Logger() should fall back to a non-nil default")
+	}
+	if h.Logger() != slog.Default() {
+		t.Error("Logger() should fall back to slog.Default()")
+	}
+}
+
+func TestStubEnvHandle_NilPropertiesYieldsEmpty(t *testing.T) {
+	h := testrig.StubEnvHandle("env", nil, nil)
+	got := h.Properties()
+	if got == nil {
+		t.Fatal("Properties() should not be nil")
+	}
+	if len(got) != 0 {
+		t.Errorf("Properties() should be empty, got %v", got)
+	}
+}
+
+func TestStubEnvHandle_PropertiesIsSnapshot(t *testing.T) {
+	original := testrig.Properties{"k": "v"}
+	h := testrig.StubEnvHandle("env", nil, original)
+
+	got := h.Properties()
+	got["k"] = "MUTATED"
+	got["intruder"] = "x"
+
+	again := h.Properties()
+	if again["k"] != "v" {
+		t.Errorf("snapshot semantics broken: subsequent read sees %q", again["k"])
+	}
+	if _, ok := again["intruder"]; ok {
+		t.Errorf("snapshot semantics broken: subsequent read contains intruder key")
+	}
+}
+
+func TestStubEnvHandle_InputMutationDoesNotLeak(t *testing.T) {
+	input := testrig.Properties{"k": "v"}
+	h := testrig.StubEnvHandle("env", nil, input)
+
+	input["k"] = "MUTATED"
+	input["intruder"] = "x"
+
+	got := h.Properties()
+	if got["k"] != "v" {
+		t.Errorf("stub leaked input mutation: got %q, want %q", got["k"], "v")
+	}
+	if _, ok := got["intruder"]; ok {
+		t.Errorf("stub leaked input mutation: intruder key present")
 	}
 }

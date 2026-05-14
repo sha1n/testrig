@@ -149,11 +149,11 @@ func (t *Postgres) Name() string { return t.name }
 
 // Start implements testrig.Service. Returns an error if called while a
 // previous Start is still active (i.e. Stop has not been called).
-func (t *Postgres) Start(ctx context.Context, logger *slog.Logger) (testrig.Properties, error) {
+func (t *Postgres) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Properties, error) {
 	if t.container != nil {
 		return nil, fmt.Errorf("postgres service %q already started", t.name)
 	}
-	t.logger = logger
+	t.logger = env.Logger()
 	t.logger.Info("🎬 Starting Postgres service", "name", t.name)
 
 	container, err := postgres.Run(ctx,

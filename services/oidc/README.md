@@ -28,6 +28,7 @@ import (
     "testing"
     "time"
 
+    "github.com/sha1n/testrig"
     "github.com/sha1n/testrig/services/oidc"
 )
 
@@ -36,7 +37,7 @@ func TestValidator(t *testing.T) {
         WithAllowedAudiences("my-api").
         WithRedirectURIs("http://localhost:8080/callback")
 
-    if _, err := iss.Start(context.Background(), slog.Default()); err != nil {
+    if _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
         t.Fatalf("start issuer: %v", err)
     }
     t.Cleanup(func() { _ = iss.Stop(context.Background()) })
@@ -262,7 +263,7 @@ func TestMyHandler_AcceptsValidToken(t *testing.T) {
     iss := oidc.New("idp").
         WithAllowedAudiences("my-api").
         WithRedirectURIs("http://localhost/cb")
-    _, err := iss.Start(context.Background(), slog.Default())
+    _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
     if err != nil {
         t.Fatal(err)
     }
@@ -295,7 +296,7 @@ func TestAuthCodeFlow(t *testing.T) {
         WithAllowedAudiences("my-api").
         WithRedirectURIs("http://localhost:8080/callback").
         WithDefaultSubject("alice")
-    _, err := iss.Start(context.Background(), slog.Default())
+    _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
     if err != nil {
         t.Fatal(err)
     }
@@ -348,7 +349,7 @@ func TestClientCredentials(t *testing.T) {
         WithClientSecret("s3cr3t").
         WithAllowedAudiences("svc-b").
         WithRedirectURIs("http://localhost/cb") // required by validation
-    _, err := iss.Start(context.Background(), slog.Default())
+    _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
     if err != nil {
         t.Fatal(err)
     }
@@ -378,7 +379,7 @@ func TestRefreshRotation(t *testing.T) {
     iss := oidc.New("idp").
         WithAllowedAudiences("my-api").
         WithRedirectURIs("http://localhost:8080/callback")
-    _, err := iss.Start(context.Background(), slog.Default())
+    _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
     if err != nil {
         t.Fatal(err)
     }

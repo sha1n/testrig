@@ -1,9 +1,6 @@
 package testrig
 
-import (
-	"context"
-	"log/slog"
-)
+import "context"
 
 // Service represents a stateful dependency managed by an Env.
 //
@@ -18,13 +15,15 @@ type Service interface {
 	Name() string
 
 	// Start brings the service up and returns the properties it publishes
-	// (typically host/port/credentials/URL). It receives a logger scoped
-	// to the service (with a `service=<name>` attribute already attached).
+	// (typically host/port/credentials/URL). It receives an EnvHandle that
+	// exposes the env's name, a service-scoped logger, and a snapshot of
+	// properties published by services in previously-completed stages.
 	//
-	// Start is invoked concurrently with sibling services and cannot
-	// observe their published properties. Cross-service wiring belongs in
-	// test setup code, between env.Start and the assertions.
-	Start(ctx context.Context, logger *slog.Logger) (Properties, error)
+	// Start is invoked concurrently with sibling services in the same
+	// stage and cannot rely on observing their published properties.
+	// Properties published by services in earlier stages of the same
+	// track are visible via env.Properties().
+	Start(ctx context.Context, env EnvHandle) (Properties, error)
 
 	// Stop tears the service down. Implementations should be idempotent
 	// so repeated Stop calls (e.g. user error or rollback paths) are safe.

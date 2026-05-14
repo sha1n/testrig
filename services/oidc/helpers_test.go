@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/services/oidc"
 )
 
@@ -20,7 +21,7 @@ func startMinimal(t *testing.T) *oidc.Issuer {
 	iss := oidc.New("idp").
 		WithRedirectURIs("http://localhost:8080/callback").
 		WithAllowedAudiences("test-api")
-	if _, err := iss.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	t.Cleanup(func() { _ = iss.Stop(context.Background()) })

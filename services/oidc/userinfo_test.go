@@ -12,6 +12,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/services/oidc"
 )
 
@@ -58,7 +59,7 @@ func TestUserinfo_WithCustomClaims_MergesIntoResponse(t *testing.T) {
 		WithAllowedAudiences("test-api").
 		WithUserClaim("alice", "email", "alice@example.com").
 		WithUserClaim("alice", "name", "Alice")
-	if _, err := iss.Start(context.Background(), slog.Default()); err != nil {
+	if _, err := iss.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() { _ = iss.Stop(context.Background()) })
