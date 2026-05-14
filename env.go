@@ -117,8 +117,10 @@ func (e *Env) Name() string {
 	return e.name
 }
 
-// Properties returns a copy of all properties in the environment, or an
-// empty map when the env is idle.
+// Properties returns a snapshot of all properties in the environment, or
+// an empty map when the env is idle. The same data is returned directly
+// by Start; Properties is for callers that only hold an *Env (lifecycle
+// hooks internally, code paths that didn't capture Start's return).
 func (e *Env) Properties() Properties {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -137,9 +139,15 @@ func (e *Env) Properties() Properties {
 //
 // Start may not be called on a running or starting env. After a
 // successful Stop, the same Env can be Started again with fresh state.
-func (e *Env) Start(ctx context.Context) error {
+//
+// On success, Start returns a snapshot of every property published by
+// every service that started. The returned snapshot is the same value
+// passed to AfterStart hooks: caller and hooks observe identical state.
+// The map is owned by the caller; mutating it has no effect on the env.
+// On any failure path the first return value is nil.
+func (e *Env) Start(ctx context.Context) (Properties, error) {
 	if err := e.beginStart(); err != nil {
-		return err
+		return nil, err
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -149,17 +157,18 @@ func (e *Env) Start(ctx context.Context) error {
 		g.Go(func() error { return e.runTrack(gctx, trackIdx, track) })
 	}
 	if err := g.Wait(); err != nil {
-		return errors.Join(err, e.Stop(context.Background()))
+		return nil, errors.Join(err, e.Stop(context.Background()))
 	}
 
 	e.mu.Lock()
 	e.state = stateRunning
+	snapshot := e.properties.snapshot()
 	e.mu.Unlock()
 
-	if err := e.runAfterStartHooks(ctx); err != nil {
-		return errors.Join(err, e.Stop(context.Background()))
+	if err := e.runAfterStartHooks(ctx, snapshot); err != nil {
+		return nil, errors.Join(err, e.Stop(context.Background()))
 	}
-	return nil
+	return snapshot, nil
 }
 
 // runTrack runs the stages of a single track in order. Each stage's
@@ -304,18 +313,16 @@ func (e *Env) finishStop() {
 	e.state = stateIdle
 }
 
-// runAfterStartHooks invokes all AfterStart callbacks with a stable
-// property snapshot. Returns the first hook error.
-func (e *Env) runAfterStartHooks(ctx context.Context) error {
+// runAfterStartHooks invokes all AfterStart callbacks against the
+// caller-supplied property snapshot. The snapshot is shared with the
+// value returned by Start, so hooks and the caller observe identical
+// state. Returns the first hook error.
+func (e *Env) runAfterStartHooks(ctx context.Context, snapshot Properties) error {
 	if len(e.hooks) == 0 {
 		return nil
 	}
-	e.mu.RLock()
-	propSnapshot := e.properties.snapshot()
-	e.mu.RUnlock()
-
 	for _, hook := range e.hooks {
-		if err := hook.AfterStart(ctx, propSnapshot, e.logger); err != nil {
+		if err := hook.AfterStart(ctx, snapshot, e.logger); err != nil {
 			return fmt.Errorf("lifecycle hook AfterStart failed: %w", err)
 		}
 	}

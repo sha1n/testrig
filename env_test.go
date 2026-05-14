@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,14 +92,169 @@ func TestEnv_Start_Success(t *testing.T) {
 
 	env := testrig.New("test").With(s1, s2)
 
-	if err := env.Start(context.Background()); err != nil {
+	props, err := env.Start(context.Background())
+	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
 
-	props := env.Properties()
 	if props["k1"] != "v1" || props["k2"] != "v2" {
 		t.Errorf("Unexpected properties: %v", props)
+	}
+}
+
+func TestEnv_Start_ReturnsPropertiesOnSuccess(t *testing.T) {
+	// Start's first return must be a non-nil snapshot containing every
+	// property published by every successfully-started service.
+	s1 := &MockService{name: "svc1", properties: testrig.Properties{"k1": "v1"}}
+	s2 := &MockService{name: "svc2", properties: testrig.Properties{"k2": "v2"}}
+
+	env := testrig.New("test").With(s1, s2)
+
+	props, err := env.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	if props == nil {
+		t.Fatal("Start returned nil Properties on success")
+	}
+	if got := props["k1"]; got != "v1" {
+		t.Errorf("props[k1] = %q, want v1", got)
+	}
+	if got := props["k2"]; got != "v2" {
+		t.Errorf("props[k2] = %q, want v2", got)
+	}
+}
+
+func TestEnv_Start_ReturnedPropertiesIsSnapshot(t *testing.T) {
+	// Mutating the map returned by Start must not affect env.Properties()
+	// nor leak into a subsequent Start after a Stop.
+	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "v"}}
+	env := testrig.New("test").With(svc)
+
+	props, err := env.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	props["k"] = "mutated"
+	props["new"] = "injected"
+
+	live := env.Properties()
+	if live["k"] != "v" {
+		t.Errorf("env.Properties()[k] = %q, want v (mutation leaked)", live["k"])
+	}
+	if _, ok := live["new"]; ok {
+		t.Errorf("env.Properties() contains injected key (mutation leaked)")
+	}
+
+	if err := env.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+
+	// Restart and confirm the second run isn't polluted either.
+	props2, err := env.Start(context.Background())
+	if err != nil {
+		t.Fatalf("second Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	if props2["k"] != "v" {
+		t.Errorf("second run props[k] = %q, want v (mutation persisted across runs)", props2["k"])
+	}
+	if _, ok := props2["new"]; ok {
+		t.Errorf("second run props contains injected key (mutation persisted across runs)")
+	}
+}
+
+func TestEnv_Start_ReturnsNilPropertiesOnServiceFailure(t *testing.T) {
+	// When any service's Start fails, Start must return (nil, err).
+	s1 := &MockService{name: "svc1", properties: testrig.Properties{"k": "v"}}
+	s2 := &MockService{name: "svc2", startErr: errors.New("boom")}
+
+	env := testrig.New("test").With(s1, s2)
+
+	props, err := env.Start(context.Background())
+	if err == nil {
+		t.Fatal("expected error from failing service, got nil")
+	}
+	if props != nil {
+		t.Errorf("expected nil Properties on failure, got %v", props)
+	}
+}
+
+func TestEnv_Start_ReturnsNilPropertiesOnHookFailure(t *testing.T) {
+	// When an AfterStart hook returns an error, Start must return
+	// (nil, err) even though the services themselves started cleanly.
+	// Rollback is also expected to run; assert via the AfterStop hook
+	// having been invoked.
+	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "v"}}
+
+	var afterStopCalled bool
+	hook := &MockLifecycleHook{
+		afterStart: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+			return errors.New("hook-fail")
+		},
+		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+			afterStopCalled = true
+			return nil
+		},
+	}
+
+	env := testrig.New("test").With(svc).WithLifecycleHooks(hook)
+
+	props, err := env.Start(context.Background())
+	if err == nil {
+		t.Fatal("expected error from failing hook, got nil")
+	}
+	if props != nil {
+		t.Errorf("expected nil Properties on hook failure, got %v", props)
+	}
+	if !afterStopCalled {
+		t.Error("rollback should have invoked AfterStop")
+	}
+}
+
+func TestEnv_Start_ReturnedSnapshotMatchesHookSnapshot(t *testing.T) {
+	// The Properties returned by Start must contain the same keys and
+	// values as the snapshot the AfterStart hook received.
+	s1 := &MockService{name: "svc1", properties: testrig.Properties{"a": "1"}}
+	s2 := &MockService{name: "svc2", properties: testrig.Properties{"b": "2"}}
+
+	var hookSnapshot testrig.Properties
+	hook := &MockLifecycleHook{
+		afterStart: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+			hookSnapshot = props
+			return nil
+		},
+	}
+
+	env := testrig.New("test").With(s1, s2).WithLifecycleHooks(hook)
+
+	returned, err := env.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	if hookSnapshot == nil {
+		t.Fatal("AfterStart hook was not invoked")
+	}
+	// Pointer identity: the design contract is that caller and hook hold
+	// the *same* map, not just two equal copies. A defensive copy here
+	// would silently violate the invariant.
+	if reflect.ValueOf(returned).Pointer() != reflect.ValueOf(hookSnapshot).Pointer() {
+		t.Error("returned map and hook's map are not the same pointer — identity guarantee broken")
+	}
+	if len(returned) != len(hookSnapshot) {
+		t.Fatalf("length mismatch: returned=%d hook=%d", len(returned), len(hookSnapshot))
+	}
+	for k, v := range hookSnapshot {
+		if got := returned[k]; got != v {
+			t.Errorf("returned[%q] = %q, hook saw %q", k, got, v)
+		}
 	}
 }
 
@@ -107,7 +263,7 @@ func TestEnv_Start_ServiceError(t *testing.T) {
 
 	env := testrig.New("test").With(s1)
 
-	err := env.Start(context.Background())
+	_, err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error from service start, got nil")
 	}
@@ -123,7 +279,7 @@ func TestEnv_Start_ContextCancellation(t *testing.T) {
 	env := testrig.New("test").With(s1)
 	cancel()
 
-	err := env.Start(ctx)
+	_, err := env.Start(ctx)
 	if err == nil {
 		t.Fatal("Expected context cancellation error, got nil")
 	}
@@ -137,10 +293,10 @@ func TestEnv_StateTransitions(t *testing.T) {
 	env := testrig.New("test").With(s1)
 
 	// 1. Double Start
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("First start failed: %v", err)
 	}
-	if err := env.Start(context.Background()); err == nil {
+	if _, err := env.Start(context.Background()); err == nil {
 		t.Error("Second start should have failed")
 	}
 
@@ -155,7 +311,7 @@ func TestEnv_StateTransitions(t *testing.T) {
 	}
 
 	// 4. Restart on the same Env instance must succeed end-to-end.
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Errorf("Restart failed: %v", err)
 	}
 	_ = env.Stop(context.Background())
@@ -166,7 +322,7 @@ func TestEnv_Stop_ServiceError(t *testing.T) {
 
 	env := testrig.New("test").With(s1)
 
-	_ = env.Start(context.Background())
+	_, _ = env.Start(context.Background())
 	err := env.Stop(context.Background())
 	if err == nil {
 		t.Fatal("Expected error from service stop, got nil")
@@ -193,7 +349,7 @@ func TestEnv_Start_Rollback(t *testing.T) {
 
 	env := testrig.New("test").With(s1, s2)
 
-	err := env.Start(context.Background())
+	_, err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
@@ -212,7 +368,7 @@ func TestEnv_Start_Rollback_JoinsRollbackErrors(t *testing.T) {
 	s2 := &MockService{name: "s2", startErr: startErr}
 
 	env := testrig.New("test").With(s1, s2)
-	err := env.Start(context.Background())
+	_, err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
@@ -256,7 +412,10 @@ func TestEnv_ParallelStartStop(t *testing.T) {
 	env := testrig.New("test").With(mkSvc("A"), mkSvc("B"), mkSvc("C"))
 
 	startErr := make(chan error, 1)
-	go func() { startErr <- env.Start(context.Background()) }()
+	go func() {
+		_, err := env.Start(context.Background())
+		startErr <- err
+	}()
 	awaitAll(t, "Start", n, startEntered)
 	close(releaseStart)
 	if err := <-startErr; err != nil {
@@ -315,7 +474,7 @@ func TestEnv_WithLifecycleHook_Success(t *testing.T) {
 
 	env := testrig.New("test").With(s1).WithLifecycleHooks(pm)
 
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	if !startCalled {
@@ -345,7 +504,7 @@ func TestEnv_WithLifecycleHook_AfterStartError(t *testing.T) {
 
 	env := testrig.New("test").With(s1).WithLifecycleHooks(pm)
 
-	err := env.Start(context.Background())
+	_, err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error from AfterStart, got nil")
 	}
@@ -368,7 +527,7 @@ func TestEnv_WithLifecycleHook_AfterStopError(t *testing.T) {
 
 	env := testrig.New("test").With(s1).WithLifecycleHooks(pm)
 
-	_ = env.Start(context.Background())
+	_, _ = env.Start(context.Background())
 	err := env.Stop(context.Background())
 	if err == nil {
 		t.Fatal("Expected error from AfterStop, got nil")
@@ -385,7 +544,7 @@ func TestEnv_PerServiceScopedLogger(t *testing.T) {
 	}
 
 	env := testrig.New("test").With(svc).WithLogger(logger)
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
@@ -431,7 +590,7 @@ func TestEnv_Properties_EmptyAfterStop(t *testing.T) {
 	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "v"}}
 	env := testrig.New("test").With(svc)
 
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	if env.Properties()["k"] != "v" {
@@ -452,7 +611,7 @@ func TestEnv_Restart_PropertiesReflectFreshRun(t *testing.T) {
 	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "first"}}
 	env := testrig.New("test").With(svc)
 
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("first Start failed: %v", err)
 	}
 	if got := env.Properties()["k"]; got != "first" {
@@ -465,7 +624,7 @@ func TestEnv_Restart_PropertiesReflectFreshRun(t *testing.T) {
 	// Mutate the service so the second run publishes a different value.
 	svc.properties = testrig.Properties{"k": "second"}
 
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("second Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
@@ -489,7 +648,7 @@ func TestEnv_Stop_MultipleHooksError(t *testing.T) {
 
 	env := testrig.New("test").With(s1).WithLifecycleHooks(h1, h2).WithLogger(logger)
 
-	_ = env.Start(context.Background())
+	_, _ = env.Start(context.Background())
 	err := env.Stop(context.Background())
 
 	if err == nil {
@@ -514,7 +673,7 @@ func TestEnv_Stop_ConcurrentCallsAreIdempotent(t *testing.T) {
 	}
 
 	env := testrig.New("test").With(svc).WithLifecycleHooks(hook)
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 
@@ -542,7 +701,7 @@ func TestEnv_Start_DuplicateServiceName(t *testing.T) {
 	s2 := &MockService{name: "dup-svc"}
 
 	env := testrig.New("test").With(s1, s2)
-	err := env.Start(context.Background())
+	_, err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error for duplicate service name")
 	}
@@ -553,7 +712,7 @@ func TestEnv_Start_DuplicateServiceName(t *testing.T) {
 	// Verify env returns to stateIdle — a fresh env with unique services succeeds.
 	s3 := &MockService{name: "unique-svc"}
 	env2 := testrig.New("test").With(s3)
-	if err := env2.Start(context.Background()); err != nil {
+	if _, err := env2.Start(context.Background()); err != nil {
 		t.Fatalf("Start with unique services failed: %v", err)
 	}
 	_ = env2.Stop(context.Background())
@@ -668,7 +827,10 @@ func TestEnv_WithStages_RunsStagesInOrder(t *testing.T) {
 
 	env := testrig.New("staged").WithStages(testrig.NewStages(a).Then(b, c))
 	startErr := make(chan error, 1)
-	go func() { startErr <- env.Start(context.Background()) }()
+	go func() {
+		_, err := env.Start(context.Background())
+		startErr <- err
+	}()
 
 	awaitAll(t, "stage 2 Start", 2, stage2Entered)
 	close(releaseStage2)
@@ -713,7 +875,7 @@ func TestEnv_WithStages_StopsInReverseStageOrder(t *testing.T) {
 	}
 
 	env := testrig.New("staged-stop").WithStages(testrig.NewStages(a).Then(b, c))
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	if err := env.Stop(context.Background()); err != nil {
@@ -763,7 +925,10 @@ func TestEnv_TracksRunInParallel(t *testing.T) {
 
 	env := testrig.New("two-tracks").With(a).With(b)
 	startErr := make(chan error, 1)
-	go func() { startErr <- env.Start(context.Background()) }()
+	go func() {
+		_, err := env.Start(context.Background())
+		startErr <- err
+	}()
 
 	awaitAll(t, "two-tracks Start", n, entered)
 	close(release)
@@ -798,7 +963,7 @@ func TestEnvHandle_NameAvailableToService(t *testing.T) {
 	}
 
 	env := testrig.New("my-env").With(svc)
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
@@ -820,7 +985,7 @@ func TestEnvHandle_LoggerIsServiceScoped(t *testing.T) {
 	}
 
 	env := testrig.New("test").With(svc).WithLogger(logger)
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
@@ -841,7 +1006,7 @@ func TestEnvHandle_PropertiesEmptyAtFirstStage(t *testing.T) {
 	}
 
 	env := testrig.New("test").With(svc)
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
@@ -868,7 +1033,7 @@ func TestEnvHandle_PropertiesVisibility_LaterStageSeesEarlierStage(t *testing.T)
 	}
 
 	env := testrig.New("test").WithStages(testrig.NewStages(stage1).Then(stage2))
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
@@ -893,7 +1058,7 @@ func TestEnvHandle_PropertiesIsSnapshot_MutationDoesNotLeak(t *testing.T) {
 	}
 
 	env := testrig.New("test").WithStages(testrig.NewStages(stage1).Then(stage2))
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()

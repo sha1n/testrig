@@ -20,11 +20,11 @@ func TestIntegration_FullLifecycle(t *testing.T) {
 	s2 := &MockService{name: "svc2", properties: testrig.Properties{"b": "2"}}
 
 	env := testrig.New("test").With(s1, s2)
-	if err := env.Start(context.Background()); err != nil {
+	props, err := env.Start(context.Background())
+	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	props := env.Properties()
 	if props["a"] != "1" || props["b"] != "2" {
 		t.Errorf("Unexpected properties: %v", props)
 	}
@@ -43,12 +43,13 @@ func TestIntegration_ParallelEnvsAreIndependent(t *testing.T) {
 		t.Parallel()
 		svc := &MockService{name: "parallel-svc", properties: testrig.Properties{"x": "env1-val"}}
 		env := testrig.New("test").With(svc)
-		if err := env.Start(context.Background()); err != nil {
+		props, err := env.Start(context.Background())
+		if err != nil {
 			t.Fatalf("Start failed: %v", err)
 		}
 		defer func() { _ = env.Stop(context.Background()) }()
 
-		if env.Properties()["x"] != "env1-val" {
+		if props["x"] != "env1-val" {
 			t.Error("env1 has wrong property value")
 		}
 	})
@@ -57,12 +58,13 @@ func TestIntegration_ParallelEnvsAreIndependent(t *testing.T) {
 		t.Parallel()
 		svc := &MockService{name: "parallel-svc", properties: testrig.Properties{"x": "env2-val"}}
 		env := testrig.New("test").With(svc)
-		if err := env.Start(context.Background()); err != nil {
+		props, err := env.Start(context.Background())
+		if err != nil {
 			t.Fatalf("Start failed: %v", err)
 		}
 		defer func() { _ = env.Stop(context.Background()) }()
 
-		if env.Properties()["x"] != "env2-val" {
+		if props["x"] != "env2-val" {
 			t.Error("env2 has wrong property value")
 		}
 	})
@@ -76,7 +78,7 @@ func TestIntegration_ServiceStartError_PartialRollback(t *testing.T) {
 	s2 := &MockService{name: "svc2", startErr: errors.New("fail")}
 
 	env := testrig.New("test").With(s1, s2)
-	err := env.Start(context.Background())
+	_, err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error")
 	}
@@ -89,10 +91,10 @@ func TestIntegration_ServiceStartError_PartialRollback(t *testing.T) {
 
 func TestIntegration_NoServices(t *testing.T) {
 	env := testrig.New("test")
-	if err := env.Start(context.Background()); err != nil {
+	props, err := env.Start(context.Background())
+	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	props := env.Properties()
 	if len(props) != 0 {
 		t.Errorf("Expected empty properties, got %v", props)
 	}
@@ -113,7 +115,7 @@ func TestIntegration_ConcurrentStartCalls(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func() {
 			defer wg.Done()
-			if err := env.Start(context.Background()); err != nil {
+			if _, err := env.Start(context.Background()); err != nil {
 				failures.Add(1)
 			} else {
 				successes.Add(1)
@@ -143,7 +145,7 @@ func TestIntegration_ContextCancelDuringStart(t *testing.T) {
 		cancel()
 	}()
 
-	err := env.Start(ctx)
+	_, err := env.Start(ctx)
 	if err == nil {
 		t.Fatal("Expected error from context cancellation")
 	}
@@ -158,7 +160,7 @@ func TestIntegration_StartRetryAfterFailure(t *testing.T) {
 	svc := &MockService{name: "retry-svc", startErr: errors.New("temp-fail")}
 
 	env := testrig.New("test").With(svc)
-	err := env.Start(context.Background())
+	_, err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected first Start to fail")
 	}
@@ -166,12 +168,13 @@ func TestIntegration_StartRetryAfterFailure(t *testing.T) {
 	svc.startErr = nil
 	svc.properties = testrig.Properties{"k": "v"}
 
-	if err := env.Start(context.Background()); err != nil {
+	props, err := env.Start(context.Background())
+	if err != nil {
 		t.Fatalf("Second Start should succeed, got %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
 
-	if env.Properties()["k"] != "v" {
+	if props["k"] != "v" {
 		t.Error("Expected properties from second Start")
 	}
 }
@@ -184,18 +187,18 @@ func TestIntegration_FreshEnv_DoesNotInheritFromPriorEnv(t *testing.T) {
 	svc2 := &MockService{name: "second-only", properties: testrig.Properties{"b": "2"}}
 
 	first := testrig.New("test").With(svc1)
-	if err := first.Start(context.Background()); err != nil {
+	if _, err := first.Start(context.Background()); err != nil {
 		t.Fatalf("First Start failed: %v", err)
 	}
 	_ = first.Stop(context.Background())
 
 	env := testrig.New("test").With(svc1, svc2)
-	if err := env.Start(context.Background()); err != nil {
+	props, err := env.Start(context.Background())
+	if err != nil {
 		t.Fatalf("Second Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
 
-	props := env.Properties()
 	if props["a"] != "1" {
 		t.Error("Expected property a from svc1")
 	}
@@ -217,7 +220,7 @@ func TestIntegration_AfterStartHookFailure_RollsBackServices(t *testing.T) {
 	}
 
 	env := testrig.New("test").With(svc).WithLifecycleHooks(hook)
-	err := env.Start(context.Background())
+	_, err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error from hook failure")
 	}
@@ -242,12 +245,12 @@ func TestIntegration_WithName_AppearsInError(t *testing.T) {
 	svc := &MockService{name: "svc1"}
 	env := testrig.New("named-env").With(svc)
 
-	if err := env.Start(context.Background()); err != nil {
+	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("First Start failed: %v", err)
 	}
 	defer func() { _ = env.Stop(context.Background()) }()
 
-	err := env.Start(context.Background())
+	_, err := env.Start(context.Background())
 	if err == nil {
 		t.Fatal("Expected error from double start")
 	}

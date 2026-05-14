@@ -63,11 +63,11 @@ func TestSomething(t *testing.T) {
         WithDSNPropertyName("DATABASE_URL")
 
     env := testrig.New("test").With(pg)
-    require.NoError(t, env.Start(context.Background()))
+    props, err := env.Start(context.Background())
+    require.NoError(t, err)
     t.Cleanup(func() { _ = env.Stop(context.Background()) })
 
     // Properties are ready to merge into your app's config loader.
-    props := env.Properties()
     dsn := props["DATABASE_URL"]
     _ = dsn
 

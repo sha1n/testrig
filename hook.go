@@ -20,6 +20,9 @@ type LifecycleHook interface {
 	//
 	// `props` is a stable snapshot of the environment's properties at
 	// the moment AfterStart fires; it is safe to read concurrently.
+	// Hooks must not mutate `props` — the same map is returned to the
+	// caller of Env.Start, and is shared with every other AfterStart
+	// hook in registration order.
 	AfterStart(ctx context.Context, props Properties, logger *slog.Logger) error
 
 	// AfterStop is called once every service in the environment has
