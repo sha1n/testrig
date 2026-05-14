@@ -79,7 +79,7 @@ func main() {
 	}
 	log.Printf("🌐 HTTP server listening on %s", lis.Addr())
 
-	demo.PrintReadyBanner(listenHost+":"+appPort, bundle.Issuer, wired.Audience())
+	demo.PrintReadyBanner(listenHost+":"+appPort, bundle.Issuer, wired.Audience(), bundle.WM.Client())
 
 	if err := wired.Run(ctx, lis); err != nil {
 		log.Fatalf("❌ server stopped with error: %v", err)

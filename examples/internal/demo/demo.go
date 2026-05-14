@@ -7,27 +7,43 @@ package demo
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"time"
+
+	wiremock "github.com/wiremock/go-wiremock"
 
 	"github.com/sha1n/testrig/services/oidc"
 )
 
-// demoSubject is the JWT `sub` claim used for the printed-out token.
-const demoSubject = "demo-user"
+const (
+	// demoSubject is the JWT `sub` claim used for the printed-out token.
+	demoSubject = "demo-user"
+	// demoTokenTTL is the lifetime of the printed-out token.
+	demoTokenTTL = time.Hour
+	// demoKey is the key the printed curl commands operate on.
+	demoKey = "hello"
+	// demoRemoteBody is the body WireMock returns for the demo lookup. POST
+	// /save fetches and persists this; GET /lookup echoes it back.
+	demoRemoteBody = `{"message":"hello from the remote service"}`
+)
 
-// demoTokenTTL is the lifetime of the printed-out token.
-const demoTokenTTL = time.Hour
-
-// PrintReadyBanner mints a short-lived Bearer token for demoSubject against
-// audience and prints a friendly summary plus a ready-to-paste curl command
-// that hits GET /lookup on the running app at hostPort (e.g. "127.0.0.1:8080").
-// If token minting fails (e.g. issuer not started), the failure is logged and
-// the banner is skipped — never fatal, this is a demo affordance.
-func PrintReadyBanner(hostPort string, issuer *oidc.Issuer, audience string) {
+// PrintReadyBanner makes the demo flow actually work end-to-end:
+//   - stubs the WireMock remote so POST /save?key=hello has something to fetch,
+//   - mints a short-lived Bearer token for demoSubject against audience,
+//   - prints copy-pasteable POST /save and GET /lookup curl commands targeting
+//     the running app at hostPort (e.g. "127.0.0.1:8080").
+//
+// Token-mint or stub failures are logged but never fatal — this is a demo
+// affordance, not a startup precondition.
+func PrintReadyBanner(hostPort string, issuer *oidc.Issuer, audience string, wm *wiremock.Client) {
 	token, err := issuer.SignFor(demoSubject, audience, demoTokenTTL)
 	if err != nil {
 		log.Printf("⚠️  could not mint demo token: %v", err)
 		return
+	}
+
+	if err := stubDemoLookup(wm); err != nil {
+		log.Printf("⚠️  could not stub remote lookup (POST /save will get a 404 body): %v", err)
 	}
 
 	fmt.Println()
@@ -37,11 +53,27 @@ func PrintReadyBanner(hostPort string, issuer *oidc.Issuer, audience string) {
 	fmt.Printf("   Audience: %s\n", audience)
 	fmt.Printf("   Subject:  %s (token valid for %s)\n", demoSubject, demoTokenTTL)
 	fmt.Println()
-	fmt.Println("👉 Try GET /lookup with a valid Bearer token:")
+	fmt.Println("👉 Step 1 — POST /save fetches the demo body from the remote and persists it:")
 	fmt.Println()
-	fmt.Printf("   curl -s 'http://%s/lookup?key=hello' \\\n", hostPort)
+	fmt.Printf("   curl -i -X POST 'http://%s/save?key=%s' \\\n", hostPort, demoKey)
 	fmt.Printf("        -H 'Authorization: Bearer %s'\n", token)
 	fmt.Println()
-	fmt.Println("   (Tip: POST /save?key=hello first to populate via the remote service.)")
+	fmt.Println("👉 Step 2 — GET /lookup returns the persisted body:")
 	fmt.Println()
+	fmt.Printf("   curl -s 'http://%s/lookup?key=%s' \\\n", hostPort, demoKey)
+	fmt.Printf("        -H 'Authorization: Bearer %s'\n", token)
+	fmt.Println()
+}
+
+// stubDemoLookup configures WireMock to return demoRemoteBody for the
+// GET /lookup?key=<demoKey> the sampleapp fires from POST /save.
+func stubDemoLookup(wm *wiremock.Client) error {
+	return wm.StubFor(
+		wiremock.Get(wiremock.URLPathEqualTo("/lookup")).
+			WithQueryParam("key", wiremock.EqualTo(demoKey)).
+			WillReturnResponse(wiremock.NewResponse().
+				WithStatus(http.StatusOK).
+				WithHeaders(map[string]string{"Content-Type": "application/json"}).
+				WithBody(demoRemoteBody)),
+	)
 }
