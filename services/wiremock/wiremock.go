@@ -6,8 +6,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/sha1n/testrig"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -41,11 +44,19 @@ type WireMock struct {
 	logger *slog.Logger
 
 	urlPropName string
+	verbose     bool
+	banner      bool
 
 	// Runtime state, populated during Start and cleared by Stop.
 	// container != nil is the canonical "currently running" check.
 	container testcontainers.Container
 	url       string
+	logStop   context.CancelFunc // non-nil only while verbose log supervisor is running
+
+	// Seams for unit testing. nil in production; set by internal tests to
+	// avoid spinning up real containers or a real Docker daemon.
+	containerRunFn    func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
+	newDockerClientFn func() (*dockerclient.Client, error)
 }
 
 // New creates a WireMock service with default configuration.
@@ -72,6 +83,35 @@ func (t *WireMock) WithURLPropertyName(name string) *WireMock {
 	return t
 }
 
+// WithVerboseLogging enables WireMock's --verbose mode and streams the
+// container's stdout/stderr into the testrig logger. Off by default to keep
+// test output clean; turn on when you want to see every request the mock
+// receives (matched stubs, unmatched requests, journal entries) in the same
+// log stream as the rest of testrig.
+func (t *WireMock) WithVerboseLogging() *WireMock { t.verbose = true; return t }
+
+// WithBanner re-enables WireMock's ASCII art startup banner. The banner is
+// suppressed by default to keep verbose output focused on request/match
+// traffic; opt back in if you want the banner for visual confirmation of a
+// fresh start. No effect without WithVerboseLogging — without a log consumer
+// the banner is never delivered to the testrig logger regardless.
+func (t *WireMock) WithBanner() *WireMock { t.banner = true; return t }
+
+// argsForVerbose returns the CLI args to pass to the WireMock container.
+// Returns nil when verbose is off so the image's default command is used
+// unchanged. When verbose is on, --disable-banner is appended unless the
+// caller opted into the startup banner via WithBanner.
+func argsForVerbose(verbose, banner bool) []string {
+	if !verbose {
+		return nil
+	}
+	args := []string{"--verbose"}
+	if !banner {
+		args = append(args, "--disable-banner")
+	}
+	return args
+}
+
 // Name implements testrig.Service.
 func (t *WireMock) Name() string { return t.name }
 
@@ -84,30 +124,74 @@ func (t *WireMock) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Pr
 	t.logger = env.Logger()
 	t.logger.Info("🎬 Starting WireMock service", "name", t.name)
 
-	container, err := testcontainers.Run(ctx,
-		fmt.Sprintf("%s:%s", t.image, t.tag),
-		testcontainers.WithExposedPorts(containerPort+"/tcp"),
+	// Detach from the caller's ctx for all container ops. testrig's env
+	// runs services under errgroup.WithContext, whose ctx is cancelled the
+	// instant the stage finishes — including the success case. Because
+	// testcontainers' log-producer lifecycle hook derives its ctx from the
+	// one passed to Run, propagating that cancellation kills verbose log
+	// streaming the moment env.Start returns. The wait strategy below
+	// enforces its own 60s startup deadline, so we don't need ctx
+	// cancellation to bound the call.
+	runCtx := context.WithoutCancel(ctx)
+
+	opts := []testcontainers.ContainerCustomizer{
+		testcontainers.WithExposedPorts(containerPort + "/tcp"),
 		testcontainers.WithWaitStrategy(
 			wait.ForHTTP("/__admin").
-				WithPort(containerPort+"/tcp").
-				WithStartupTimeout(60*time.Second),
+				WithPort(containerPort + "/tcp").
+				WithStartupTimeout(60 * time.Second),
 		),
+	}
+	if args := argsForVerbose(t.verbose, t.banner); args != nil {
+		opts = append(opts, testcontainers.WithCmd(args...))
+	}
+
+	var (
+		container testcontainers.Container
+		err       error
 	)
+	if t.containerRunFn != nil {
+		container, err = t.containerRunFn(runCtx, fmt.Sprintf("%s:%s", t.image, t.tag), opts...)
+	} else {
+		container, err = testcontainers.Run(runCtx, fmt.Sprintf("%s:%s", t.image, t.tag), opts...)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to start wiremock container: %w", err)
 	}
 	t.container = container
 
-	host, err := container.Host(ctx)
+	if t.verbose {
+		logCtx, logStop := context.WithCancel(context.Background())
+		t.logStop = logStop
+		go t.streamLogs(logCtx, container.GetContainerID())
+	}
+
+	// Any failure past this point must release the container so the
+	// instance stays reusable via a fresh Start.
+	success := false
+	defer func() {
+		if success {
+			return
+		}
+		if t.logStop != nil {
+			t.logStop()
+			t.logStop = nil
+		}
+		_ = container.Terminate(context.Background())
+		t.container = nil
+	}()
+
+	host, err := container.Host(runCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wiremock host: %w", err)
 	}
-	port, err := container.MappedPort(ctx, containerPort+"/tcp")
+	port, err := container.MappedPort(runCtx, containerPort+"/tcp")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wiremock mapped port: %w", err)
 	}
 	t.url = fmt.Sprintf("http://%s:%s", host, port.Port())
 
+	success = true
 	return testrig.Properties{
 		t.urlPropName: t.url,
 	}, nil
@@ -121,6 +205,12 @@ func (t *WireMock) Stop(ctx context.Context) error {
 		return nil
 	}
 	t.logger.Info("🛑 Stopping WireMock service", "name", t.name)
+	// Cancel the supervisor goroutine before terminating the container so it
+	// does not attempt a restart after the container is gone.
+	if t.logStop != nil {
+		t.logStop()
+		t.logStop = nil
+	}
 	err := t.container.Terminate(ctx)
 	t.container = nil
 	t.url = ""
@@ -132,3 +222,80 @@ func (t *WireMock) URL() string { return t.url }
 
 // Client returns a WireMock client ready for fluent stubbing. Only valid after Start.
 func (t *WireMock) Client() *wiremock.Client { return wiremock.NewClient(t.url) }
+
+// logStreamOpener is the subset of the Docker client API used by streamLogs.
+// The interface makes the streaming logic unit-testable without a live Docker daemon.
+type logStreamOpener interface {
+	ContainerLogs(ctx context.Context, containerID string, options dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error)
+}
+
+// lineWriter is an io.Writer that emits each Write call as a single slog entry.
+// Trailing \r\n is trimmed; empty content after trimming is dropped.
+type lineWriter struct {
+	logger *slog.Logger
+	level  slog.Level
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	msg := strings.TrimRight(string(p), "\r\n")
+	if msg != "" {
+		w.logger.Log(context.Background(), w.level, msg)
+	}
+	return len(p), nil
+}
+
+// streamLogs opens a following multiplexed log stream for the given container
+// and routes stdout (INFO) and stderr (WARN) into the testrig logger for the
+// duration of ctx. It restarts on clean EOF — the symptom of Docker Desktop
+// silently terminating idle ContainerLogs --follow HTTP streams on macOS. An
+// error opening the stream or a non-EOF read error causes a clean exit without
+// restart.
+func (t *WireMock) streamLogs(ctx context.Context, containerID string) {
+	newClientFn := func() (*dockerclient.Client, error) { return dockerclient.New(dockerclient.FromEnv) }
+	if t.newDockerClientFn != nil {
+		newClientFn = t.newDockerClientFn
+	}
+	dockerClient, err := newClientFn()
+	if err != nil {
+		t.logger.Warn("WireMock log stream: failed to create Docker client", "name", t.name, "err", err)
+		return
+	}
+	defer func() { _ = dockerClient.Close() }()
+
+	t.streamLogsFrom(ctx, containerID, dockerClient)
+}
+
+// streamLogsFrom is the testable core of streamLogs: it accepts a logStreamOpener
+// so unit tests can inject a fake without a live Docker daemon.
+func (t *WireMock) streamLogsFrom(ctx context.Context, containerID string, opener logStreamOpener) {
+	outW := &lineWriter{logger: t.logger, level: slog.LevelInfo}
+	errW := &lineWriter{logger: t.logger, level: slog.LevelWarn}
+
+	for {
+		rc, err := opener.ContainerLogs(ctx, containerID, dockerclient.ContainerLogsOptions{
+			ShowStdout: true,
+			ShowStderr: true,
+			Follow:     true,
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			t.logger.Warn("WireMock log stream failed to open", "name", t.name, "err", err)
+			return
+		}
+
+		_, copyErr := stdcopy.StdCopy(outW, errW, rc)
+		_ = rc.Close()
+
+		if ctx.Err() != nil {
+			return
+		}
+		if copyErr != nil {
+			t.logger.Warn("WireMock log stream error", "name", t.name, "err", copyErr)
+			return
+		}
+		// Clean EOF from Docker — restart.
+		t.logger.Debug("WireMock log stream clean EOF, restarting", "name", t.name)
+	}
+}

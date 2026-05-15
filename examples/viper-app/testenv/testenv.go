@@ -30,13 +30,16 @@ type Bundle struct {
 
 // Setup brings up Postgres + SchemaSeed (ordered), plus WireMock and an
 // in-process OIDC issuer (parallel), and returns the bundle plus a cleanup
-// function. Cleanup is idempotent.
+// function. Cleanup is idempotent. WireMock is always started in verbose
+// mode so demo and test runs alike surface per-request traffic in the
+// testrig log stream.
 func Setup(ctx context.Context) (*Bundle, func(), error) {
 	pg := postgres.New("pg").
 		WithDatabase("viper_app").
 		WithDSNPropertyName("DATABASE_URL")
 	wm := wiremock.New("wm").
-		WithURLPropertyName("REMOTE_URL")
+		WithURLPropertyName("REMOTE_URL").
+		WithVerboseLogging()
 	issuer := oidc.New("idp").
 		WithAllowedAudiences(Audience).
 		WithIssuerURLPropertyName("OIDC_ISSUER_URL").
