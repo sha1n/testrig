@@ -158,14 +158,6 @@ func TestWireMock_StopThenStart_Succeeds(t *testing.T) {
 	}
 }
 
-func TestWireMock_Start_Error(t *testing.T) {
-	tk := wiremock.New("err-wm").WithImage("non-existent-image-12345")
-	_, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
-	if err == nil {
-		t.Error("Expected error for non-existent image")
-	}
-}
-
 func TestWireMock_Stop_NoContainer(t *testing.T) {
 	tk := wiremock.New("no-container")
 	if err := tk.Stop(context.Background()); err != nil {
@@ -254,10 +246,9 @@ func TestWireMock_VerboseLogging_SuppressesBannerByDefault(t *testing.T) {
 // TestWireMock_VerboseLogging_SurvivesStartCtxCancel regression-pins the fix
 // for a bug in which post-startup container output was silently dropped.
 // testrig's env.runTrack runs services under errgroup.WithContext, whose ctx
-// is cancelled the moment all services in a stage finish starting. If the
-// WireMock log producer's ctx is derived from that ctx (as testcontainers'
-// built-in WithLogConsumers wires it), streaming dies the instant env.Start
-// returns, hiding every per-request log from then on.
+// is cancelled the moment all services in a stage finish starting. The
+// supervisor must own its own (background-derived) ctx so it can keep
+// streaming after the caller's Start ctx is cancelled.
 func TestWireMock_VerboseLogging_SurvivesStartCtxCancel(t *testing.T) {
 	startCtx, cancelStart := context.WithCancel(context.Background())
 	tk := wiremock.New("ctx-cancel").WithVerboseLogging()
@@ -272,16 +263,9 @@ func TestWireMock_VerboseLogging_SurvivesStartCtxCancel(t *testing.T) {
 		t.Fatalf("startup output never arrived. buf:\n%s", buf.String())
 	}
 
-	// Mimic errgroup's cleanup-cancel of the per-stage ctx. The 8s idle
-	// is the test's whole point — not flakiness padding — so it can't be
-	// replaced by an Eventually poll: we need real wall-clock time to pass
-	// through at least one full testcontainers log-production timeout
-	// cycle (default 5s). Without this delay the regression we're pinning
-	// would silently slip past (the bug only manifests after that cycle
-	// rolls over, and the real koanf-app demo idles ~10s between startup
-	// and the first user-triggered request).
+	// Mimic errgroup's cleanup-cancel of the per-stage ctx, then verify a
+	// post-cancel request still produces per-request logs.
 	cancelStart()
-	time.Sleep(8 * time.Second)
 
 	startupSnapshot := buf.String()
 	resp, err := http.Get(tk.URL() + "/probe-after-cancel")

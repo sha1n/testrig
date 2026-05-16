@@ -17,6 +17,18 @@ import (
 	"github.com/wiremock/go-wiremock"
 )
 
+// Tunables for the verbose log supervisor.
+const (
+	// logRestartBackoff is the pause between successive ContainerLogs calls
+	// after a clean EOF. Keeps the supervisor from spinning if Docker keeps
+	// returning streams that immediately close (e.g. container gone).
+	logRestartBackoff = 500 * time.Millisecond
+
+	// logStopWait is the maximum time Stop waits for the log goroutine to
+	// finish after cancelling its context and terminating the container.
+	logStopWait = 5 * time.Second
+)
+
 const (
 	defaultImage = "wiremock/wiremock"
 	defaultTag   = "3.2.0"
@@ -52,6 +64,7 @@ type WireMock struct {
 	container testcontainers.Container
 	url       string
 	logStop   context.CancelFunc // non-nil only while verbose log supervisor is running
+	logDone   chan struct{}      // closed when the verbose log goroutine returns
 
 	// Seams for unit testing. nil in production; set by internal tests to
 	// avoid spinning up real containers or a real Docker daemon.
@@ -124,16 +137,6 @@ func (t *WireMock) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Pr
 	t.logger = env.Logger()
 	t.logger.Info("🎬 Starting WireMock service", "name", t.name)
 
-	// Detach from the caller's ctx for all container ops. testrig's env
-	// runs services under errgroup.WithContext, whose ctx is cancelled the
-	// instant the stage finishes — including the success case. Because
-	// testcontainers' log-producer lifecycle hook derives its ctx from the
-	// one passed to Run, propagating that cancellation kills verbose log
-	// streaming the moment env.Start returns. The wait strategy below
-	// enforces its own 60s startup deadline, so we don't need ctx
-	// cancellation to bound the call.
-	runCtx := context.WithoutCancel(ctx)
-
 	opts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithExposedPorts(containerPort + "/tcp"),
 		testcontainers.WithWaitStrategy(
@@ -151,9 +154,9 @@ func (t *WireMock) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Pr
 		err       error
 	)
 	if t.containerRunFn != nil {
-		container, err = t.containerRunFn(runCtx, fmt.Sprintf("%s:%s", t.image, t.tag), opts...)
+		container, err = t.containerRunFn(ctx, fmt.Sprintf("%s:%s", t.image, t.tag), opts...)
 	} else {
-		container, err = testcontainers.Run(runCtx, fmt.Sprintf("%s:%s", t.image, t.tag), opts...)
+		container, err = testcontainers.Run(ctx, fmt.Sprintf("%s:%s", t.image, t.tag), opts...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to start wiremock container: %w", err)
@@ -163,7 +166,11 @@ func (t *WireMock) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Pr
 	if t.verbose {
 		logCtx, logStop := context.WithCancel(context.Background())
 		t.logStop = logStop
-		go t.streamLogs(logCtx, container.GetContainerID())
+		t.logDone = make(chan struct{})
+		go func() {
+			defer close(t.logDone)
+			t.streamLogs(logCtx, container.GetContainerID())
+		}()
 	}
 
 	// Any failure past this point must release the container so the
@@ -173,19 +180,16 @@ func (t *WireMock) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Pr
 		if success {
 			return
 		}
-		if t.logStop != nil {
-			t.logStop()
-			t.logStop = nil
-		}
+		t.haltLogStream()
 		_ = container.Terminate(context.Background())
 		t.container = nil
 	}()
 
-	host, err := container.Host(runCtx)
+	host, err := container.Host(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wiremock host: %w", err)
 	}
-	port, err := container.MappedPort(runCtx, containerPort+"/tcp")
+	port, err := container.MappedPort(ctx, containerPort+"/tcp")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wiremock mapped port: %w", err)
 	}
@@ -205,16 +209,43 @@ func (t *WireMock) Stop(ctx context.Context) error {
 		return nil
 	}
 	t.logger.Info("🛑 Stopping WireMock service", "name", t.name)
-	// Cancel the supervisor goroutine before terminating the container so it
-	// does not attempt a restart after the container is gone.
+	// Cancel the supervisor first so it doesn't try to restart after Terminate.
+	// Terminate is what actually unblocks the in-flight ContainerLogs read,
+	// so the wait for the goroutine to drain must come AFTER Terminate.
+	if t.logStop != nil {
+		t.logStop()
+	}
+	err := t.container.Terminate(ctx)
+	t.waitLogStream()
+	t.logStop = nil
+	t.container = nil
+	t.url = ""
+	return err
+}
+
+// haltLogStream signals shutdown to the verbose log supervisor and waits for
+// it to drain. Safe to call when verbose mode is off (no-op).
+func (t *WireMock) haltLogStream() {
 	if t.logStop != nil {
 		t.logStop()
 		t.logStop = nil
 	}
-	err := t.container.Terminate(ctx)
-	t.container = nil
-	t.url = ""
-	return err
+	t.waitLogStream()
+}
+
+// waitLogStream blocks until the verbose log goroutine has returned, or
+// logStopWait elapses. The bounded wait protects callers from a buggy or
+// stuck Docker stream pinning Stop forever.
+func (t *WireMock) waitLogStream() {
+	if t.logDone == nil {
+		return
+	}
+	select {
+	case <-t.logDone:
+	case <-time.After(logStopWait):
+		t.logger.Warn("WireMock log stream did not stop within deadline", "name", t.name, "wait", logStopWait)
+	}
+	t.logDone = nil
 }
 
 // URL returns the WireMock service base URL. Only valid after Start.
@@ -237,9 +268,20 @@ type lineWriter struct {
 }
 
 func (w *lineWriter) Write(p []byte) (int, error) {
-	msg := strings.TrimRight(string(p), "\r\n")
-	if msg != "" {
-		w.logger.Log(context.Background(), w.level, msg)
+	// Docker frames are normally a single line, but stdcopy can deliver a
+	// frame that contains embedded newlines (multi-line log entry, or several
+	// short lines coalesced into one frame). Emit one slog entry per line so
+	// they render correctly downstream.
+	s := strings.TrimRight(string(p), "\r\n")
+	if s == "" {
+		return len(p), nil
+	}
+	for line := range strings.SplitSeq(s, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		w.logger.Log(context.Background(), w.level, line)
 	}
 	return len(p), nil
 }
@@ -271,12 +313,23 @@ func (t *WireMock) streamLogsFrom(ctx context.Context, containerID string, opene
 	outW := &lineWriter{logger: t.logger, level: slog.LevelInfo}
 	errW := &lineWriter{logger: t.logger, level: slog.LevelWarn}
 
+	// since bounds duplication on restart: on the second and onward iterations
+	// we ask Docker only for entries newer than the moment the previous stream
+	// returned EOF. Zero value (first iteration) means "from the beginning"
+	// so we don't miss startup logs.
+	var since string
+
 	for {
-		rc, err := opener.ContainerLogs(ctx, containerID, dockerclient.ContainerLogsOptions{
+		opts := dockerclient.ContainerLogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
 			Follow:     true,
-		})
+		}
+		if since != "" {
+			opts.Since = since
+		}
+
+		rc, err := opener.ContainerLogs(ctx, containerID, opts)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -295,7 +348,18 @@ func (t *WireMock) streamLogsFrom(ctx context.Context, containerID string, opene
 			t.logger.Warn("WireMock log stream error", "name", t.name, "err", copyErr)
 			return
 		}
-		// Clean EOF from Docker — restart.
+
+		// Clean EOF from Docker — restart. Record "now" so the next call
+		// skips entries we've already delivered.
+		since = time.Now().UTC().Format(time.RFC3339Nano)
 		t.logger.Debug("WireMock log stream clean EOF, restarting", "name", t.name)
+
+		// Backoff to avoid a tight loop if Docker keeps returning streams
+		// that immediately close (e.g. container has gone away).
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(logRestartBackoff):
+		}
 	}
 }
