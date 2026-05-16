@@ -572,6 +572,34 @@ func TestStreamLogsFrom_Unit_ContainerLogsOptions(t *testing.T) {
 	}
 }
 
+// TestWaitLogStream_DeadlineExceeded_LogsWarning exercises the bounded-wait
+// branch: if the verbose log goroutine never closes logDone, waitLogStream
+// must give up after logStopWait, log a warning, and still clear logDone so
+// the WireMock instance is reusable. Defensive code path — never hit in
+// normal operation, where Terminate unblocks the streaming read and the
+// goroutine exits in milliseconds.
+func TestWaitLogStream_DeadlineExceeded_LogsWarning(t *testing.T) {
+	prev := logStopWait
+	logStopWait = 20 * time.Millisecond
+	t.Cleanup(func() { logStopWait = prev })
+
+	logger, buf := newCapturingLogger()
+	wm := &WireMock{
+		logger:  logger,
+		name:    "wait-deadline",
+		logDone: make(chan struct{}), // intentionally never closed
+	}
+
+	wm.waitLogStream()
+
+	if wm.logDone != nil {
+		t.Error("waitLogStream must clear logDone even on deadline so the instance is reusable")
+	}
+	if !strings.Contains(buf.String(), "did not stop within deadline") {
+		t.Errorf("expected deadline warning in log; got:\n%s", buf.String())
+	}
+}
+
 // ─── streamLogs (Docker client wiring) ────────────────────────────────────────
 
 // TestStreamLogs_Unit_DockerClientCreateFailure covers the dockerclient.New

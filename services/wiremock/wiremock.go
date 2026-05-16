@@ -17,8 +17,10 @@ import (
 	"github.com/wiremock/go-wiremock"
 )
 
-// Tunables for the verbose log supervisor.
-const (
+// Tunables for the verbose log supervisor. Vars (not consts) so unit tests
+// can shrink them to keep the test wall-clock low; production code never
+// mutates them.
+var (
 	// logRestartBackoff is the pause between successive ContainerLogs calls
 	// after a clean EOF. Keeps the supervisor from spinning if Docker keeps
 	// returning streams that immediately close (e.g. container gone).
