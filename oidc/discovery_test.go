@@ -14,7 +14,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/sha1n/testrig"
-	"github.com/sha1n/testrig/services/oidc"
+	"github.com/sha1n/testrig/oidc"
 )
 
 type discoveryDoc struct {

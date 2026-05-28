@@ -15,7 +15,7 @@ import (
 	"fmt"
 
 	"github.com/sha1n/testrig"
-	"github.com/sha1n/testrig/services/postgres"
+	"github.com/sha1n/testrig/postgres"
 )
 
 const schemaDDL = `

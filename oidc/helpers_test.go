@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/sha1n/testrig"
-	"github.com/sha1n/testrig/services/oidc"
+	"github.com/sha1n/testrig/oidc"
 )
 
 // startMinimal starts an Issuer with the smallest set of options that pass
