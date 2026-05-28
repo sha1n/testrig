@@ -1,8 +1,9 @@
 PROJECTNAME := "testrig"
 
-# Modules in this multi-module workspace. Order matters for tidy
-# (root before consumers).
-MODULES := . oidc postgres wiremock examples
+# Modules derived from go.work — any module added to go.work is automatically
+# included. Root (.) comes first because go.work lists it first, which matters
+# for tidy ordering.
+MODULES := $(shell awk '/^use \(/{f=1;next} /^\)/{f=0} f && NF {p=$$1; sub(/^\.\//, "", p); print p}' go.work)
 
 GOFILES := $(shell find . -type f -name '*.go' -not -path './vendor/*' -not -path './.git/*')
 

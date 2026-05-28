@@ -79,6 +79,7 @@ jobs:
             postgres/go.sum
             wiremock/go.sum
             examples/go.sum
+            tools/go.sum
 
       - name: Download dependencies
         working-directory: ${{ matrix.module }}
@@ -104,9 +105,41 @@ jobs:
           flags: ${{ matrix.module == '.' && 'root' || matrix.module }}
           fail_ci_if_error: true
 
+  tools:
+    name: Tools
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            oidc/go.sum
+            postgres/go.sum
+            wiremock/go.sum
+            examples/go.sum
+            tools/go.sum
+
+      - name: Run tools tests
+        working-directory: tools
+        run: go test ./...
+
+      - name: Vet
+        working-directory: tools
+        run: go vet ./...
+
+      - name: golangci-lint
+        working-directory: tools
+        run: go tool golangci-lint run ./...
+
   required-checks:
     name: Required Checks
-    needs: [lint, build-test]
+    needs: [lint, build-test, tools]
     runs-on: ubuntu-latest
     steps:
       - name: Success
