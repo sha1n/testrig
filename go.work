@@ -5,6 +5,6 @@ use (
 	./examples
 	./oidc
 	./postgres
-	./wiremock
 	./tools
+	./wiremock
 )
