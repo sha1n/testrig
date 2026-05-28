@@ -2,7 +2,7 @@
 
 Containerized WireMock stub server, wired into a `testrig.Env`.
 
-`services/wiremock` wraps the official `wiremock/wiremock` Docker image via
+`wiremock` wraps the official `wiremock/wiremock` Docker image via
 [testcontainers-go](https://golang.testcontainers.org/) and exposes a
 [`go-wiremock`](https://github.com/wiremock/go-wiremock) typed client so tests
 can stub HTTP responses with a fluent Go API. The service publishes its base URL
@@ -14,7 +14,7 @@ loader without any bridging code.
 This is a separate Go module. Pin to the current prototype tag while the API iterates:
 
 ```
-go get github.com/sha1n/testrig/services/wiremock@v0.0.0-prototype.1
+go get github.com/sha1n/testrig/wiremock@v0.0.0-prototype.1
 ```
 
 It transitively pulls in `github.com/sha1n/testrig`, the testcontainers stack, and `github.com/wiremock/go-wiremock`. See the top-level README for guidance on `@latest` vs. explicit pinning.
@@ -30,7 +30,7 @@ import (
     "testing"
 
     "github.com/sha1n/testrig"
-    "github.com/sha1n/testrig/services/wiremock"
+    "github.com/sha1n/testrig/wiremock"
     "github.com/stretchr/testify/require"
     gowiremock "github.com/wiremock/go-wiremock"
 )

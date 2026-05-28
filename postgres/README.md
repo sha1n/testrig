@@ -2,14 +2,14 @@
 
 A testcontainers-backed PostgreSQL service for integration tests.
 
-`services/postgres` wraps the [testcontainers-go postgres module](https://golang.testcontainers.org/modules/postgres/) and implements `testrig.Service` so it integrates directly with `testrig.Env`. On `Start` it launches a Postgres container, waits for it to accept connections, and publishes host, port, credentials, and a fully-constructed DSN as `testrig.Properties`. Once started, typed accessors (`DSN()`, `DB(ctx)`) give tests a direct handle to the running instance.
+`postgres` wraps the [testcontainers-go postgres module](https://golang.testcontainers.org/modules/postgres/) and implements `testrig.Service` so it integrates directly with `testrig.Env`. On `Start` it launches a Postgres container, waits for it to accept connections, and publishes host, port, credentials, and a fully-constructed DSN as `testrig.Properties`. Once started, typed accessors (`DSN()`, `DB(ctx)`) give tests a direct handle to the running instance.
 
 ## Install
 
 This is a separate Go module. Pin to the current prototype tag while the API iterates:
 
 ```
-go get github.com/sha1n/testrig/services/postgres@v0.0.0-prototype.1
+go get github.com/sha1n/testrig/postgres@v0.0.0-prototype.1
 ```
 
 It transitively pulls in `github.com/sha1n/testrig` and the testcontainers / pgx stack. See the top-level README for guidance on `@latest` vs. explicit pinning.
@@ -22,7 +22,7 @@ import (
     "testing"
 
     "github.com/sha1n/testrig"
-    "github.com/sha1n/testrig/services/postgres"
+    "github.com/sha1n/testrig/postgres"
 )
 
 func TestMyFeature(t *testing.T) {
