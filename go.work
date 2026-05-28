@@ -4,6 +4,7 @@ use (
 	.
 	./examples
 	./oidc
+	./pkg/dockerlog
 	./postgres
 	./tools
 	./wiremock
