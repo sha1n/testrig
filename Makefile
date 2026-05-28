@@ -2,7 +2,7 @@ PROJECTNAME := "testrig"
 
 # Modules in this multi-module workspace. Order matters for tidy
 # (root before consumers).
-MODULES := . services/oidc services/postgres services/wiremock examples
+MODULES := . oidc postgres wiremock examples
 
 GOFILES := $(shell find . -type f -name '*.go' -not -path './vendor/*' -not -path './.git/*')
 

@@ -19,9 +19,9 @@ jobs:
       matrix:
         module:
           - .
-          - services/oidc
-          - services/postgres
-          - services/wiremock
+          - oidc
+          - postgres
+          - wiremock
           - examples
     steps:
       - name: Checkout
@@ -34,9 +34,9 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
-            services/oidc/go.sum
-            services/postgres/go.sum
-            services/wiremock/go.sum
+            oidc/go.sum
+            postgres/go.sum
+            wiremock/go.sum
             examples/go.sum
             tools/go.sum
 
@@ -60,9 +60,9 @@ jobs:
       matrix:
         module:
           - .
-          - services/oidc
-          - services/postgres
-          - services/wiremock
+          - oidc
+          - postgres
+          - wiremock
           - examples
     steps:
       - name: Checkout
@@ -75,9 +75,9 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
-            services/oidc/go.sum
-            services/postgres/go.sum
-            services/wiremock/go.sum
+            oidc/go.sum
+            postgres/go.sum
+            wiremock/go.sum
             examples/go.sum
 
       - name: Download dependencies

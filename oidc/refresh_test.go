@@ -8,7 +8,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/sha1n/testrig/services/oidc"
+	"github.com/sha1n/testrig/oidc"
 )
 
 func runAuthCodeWithScope(t *testing.T, iss *oidc.Issuer, scope string) tokenResponse {

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/sha1n/testrig"
-	"github.com/sha1n/testrig/services/wiremock"
+	"github.com/sha1n/testrig/wiremock"
 )
 
 // concurrentBuffer is a goroutine-safe sink for slog. The testcontainers log

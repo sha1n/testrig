@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/sha1n/testrig/services/oidc"
+	"github.com/sha1n/testrig/oidc"
 )
 
 // authorizeHappy issues a GET /authorize with valid params and returns the
