@@ -6,7 +6,7 @@ import (
 
 	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/examples/internal/seed"
-	"github.com/sha1n/testrig/services/postgres"
+	"github.com/sha1n/testrig/postgres"
 )
 
 // TestSchemaSeed_AppliesSchema verifies the seed service runs DDL against

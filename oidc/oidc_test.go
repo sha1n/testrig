@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/sha1n/testrig"
-	"github.com/sha1n/testrig/services/oidc"
+	"github.com/sha1n/testrig/oidc"
 )
 
 func TestStart_MinimalConfig_Succeeds(t *testing.T) {

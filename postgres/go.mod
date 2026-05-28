@@ -1,19 +1,18 @@
-module github.com/sha1n/testrig/services/wiremock
+module github.com/sha1n/testrig/postgres
 
 go 1.25.0
 
 require (
-	github.com/moby/moby/api v1.54.1
-	github.com/moby/moby/client v0.4.0
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/sha1n/testrig v0.0.0-prototype.1
 	github.com/testcontainers/testcontainers-go v0.42.0
-	github.com/wiremock/go-wiremock v1.16.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 )
 
 // Local-development override: lets the workspace build before any engine tag
 // has been published. Replaces are ignored by external consumers, so this
 // only affects builds within this repo.
-replace github.com/sha1n/testrig => ../..
+replace github.com/sha1n/testrig => ..
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
@@ -36,11 +35,17 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
+	github.com/lib/pq v1.11.2 // indirect
 	github.com/lufia/plan9stats v0.0.0-20251013123823-9fd1530e3ec3 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
+	github.com/moby/moby/api v1.54.1 // indirect
+	github.com/moby/moby/client v0.4.0 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.6.0 // indirect
 	github.com/moby/sys/user v0.4.0 // indirect
@@ -66,5 +71,6 @@ require (
 	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

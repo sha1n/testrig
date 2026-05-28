@@ -15,9 +15,9 @@ The repository is a Go multi-module workspace. Each pre-built service is publish
 | Module | Path | Tag prefix |
 |---|---|---|
 | Engine | `github.com/sha1n/testrig` | (none) — e.g. `v0.1.0` |
-| OIDC service | `github.com/sha1n/testrig/services/oidc` | `services/oidc/` — e.g. `services/oidc/v0.1.0` |
-| Postgres service | `github.com/sha1n/testrig/services/postgres` | `services/postgres/` |
-| WireMock service | `github.com/sha1n/testrig/services/wiremock` | `services/wiremock/` |
+| OIDC service | `github.com/sha1n/testrig/oidc` | `oidc/` — e.g. `oidc/v0.1.0` |
+| Postgres service | `github.com/sha1n/testrig/postgres` | `postgres/` |
+| WireMock service | `github.com/sha1n/testrig/wiremock` | `wiremock/` |
 | Examples | `github.com/sha1n/testrig/examples` | not published |
 | Dev tools | `github.com/sha1n/testrig/tools` | not published — pins `golangci-lint` via Go's `tool` directive |
 
@@ -31,10 +31,9 @@ A `go.work` file at the repository root ties all modules together for editor and
 ```
 .                         — engine module: Env, Service, Stages, Properties, LifecycleHook, SetEnvVars
 go.work                   — workspace tying every module below together for local dev
-services/                 — each subdirectory is its own Go module
-  ├── oidc/               — non-dockerized OIDC issuer fixture
-  ├── postgres/           — PostgreSQL service (testcontainers-backed)
-  └── wiremock/           — WireMock service (testcontainers-backed)
+oidc/                     — non-dockerized OIDC issuer fixture
+postgres/                 — PostgreSQL service (testcontainers-backed)
+wiremock/                 — WireMock service (testcontainers-backed)
 examples/                 — single Go module with runnable integration examples
   ├── internal/sampleapp  — shared HTTP server used by both example apps
   ├── internal/seed       — schema-seed testrig.Service used by both example apps
@@ -44,7 +43,7 @@ tools/                    — dev-tools module; pins `golangci-lint` via Go 1.24
 docs/                     — specs and plans
 ```
 
-> **Layout invariant:** the framework's public API lives in the engine module root package `testrig`. Each pre-built service is its own module under `services/<name>/`, exporting a type that implements `testrig.Service`.
+> **Layout invariant:** the framework's public API lives in the engine module root package `testrig`. Each pre-built service is its own module under the root directory (`/<name>/`), exporting a type that implements `testrig.Service`.
 
 ## Core Concepts
 
@@ -202,7 +201,7 @@ See `examples/viper-app` and `examples/koanf-app` for full patterns.
 
 ## Pre-built services
 
-Each package under `services/` provides a service type — a pre-configured test harness for a specific dependency. Each:
+Each pre-built service package provides a service type — a pre-configured test harness for a specific dependency. Each:
 
 - Implements `testrig.Service`, so it can be added to an `Env` via `(*Env).With(...)` or `(*Env).WithStages(...)`.
 - Is constructed with `New(name)` and configured via chainable `With*` methods that mutate and return the value (no separate Builder type).
@@ -211,7 +210,7 @@ Each package under `services/` provides a service type — a pre-configured test
 
 Configuration methods accept primitive args and do not panic on nil.
 
-### `services/postgres`
+### `postgres`
 
 A PostgreSQL service backed by testcontainers-go.
 
@@ -220,7 +219,7 @@ A PostgreSQL service backed by testcontainers-go.
 - The DSN is built via `net/url` so credentials and db names with special characters round-trip correctly.
 - `*postgres.Postgres` exposes `DSN() string` and `DB(ctx) (*sql.DB, error)`. `DB` uses the `pgx` stdlib driver and Pings the connection before returning, so failures surface at the call site rather than on first query.
 
-### `services/wiremock`
+### `wiremock`
 
 A WireMock service backed by testcontainers-go.
 
@@ -243,7 +242,7 @@ A WireMock service backed by testcontainers-go.
 
 ## Build & Test
 
-Every multi-module target iterates over the modules listed at the top of the `Makefile` (`MODULES := . services/oidc services/postgres services/wiremock examples`).
+Every multi-module target iterates over the modules listed at the top of the `Makefile` (`MODULES := . oidc postgres wiremock examples`).
 
 ```
 make check          # format + lint + test, every module (default)

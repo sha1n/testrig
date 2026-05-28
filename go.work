@@ -3,8 +3,8 @@ go 1.25.0
 use (
 	.
 	./examples
-	./services/oidc
-	./services/postgres
-	./services/wiremock
+	./oidc
+	./postgres
+	./wiremock
 	./tools
 )

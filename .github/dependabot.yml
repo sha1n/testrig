@@ -7,19 +7,19 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: "gomod"
-    directory: "/services/oidc"
+    directory: "/oidc"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
 
   - package-ecosystem: "gomod"
-    directory: "/services/postgres"
+    directory: "/postgres"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
 
   - package-ecosystem: "gomod"
-    directory: "/services/wiremock"
+    directory: "/wiremock"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
