@@ -19,6 +19,7 @@ jobs:
       matrix:
         module:
           - .
+          - pkg/dockerlog
           - oidc
           - postgres
           - wiremock
@@ -34,6 +35,7 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
+            pkg/dockerlog/go.sum
             oidc/go.sum
             postgres/go.sum
             wiremock/go.sum
@@ -60,6 +62,7 @@ jobs:
       matrix:
         module:
           - .
+          - pkg/dockerlog
           - oidc
           - postgres
           - wiremock
@@ -75,6 +78,7 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
+            pkg/dockerlog/go.sum
             oidc/go.sum
             postgres/go.sum
             wiremock/go.sum
@@ -119,6 +123,7 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
+            pkg/dockerlog/go.sum
             oidc/go.sum
             postgres/go.sum
             wiremock/go.sum
@@ -136,12 +141,10 @@ jobs:
       - name: golangci-lint
         working-directory: tools
         run: go tool golangci-lint run ./...
-
   required-checks:
     name: Required Checks
     needs: [lint, build-test, tools]
     runs-on: ubuntu-latest
     steps:
       - name: Success
-        run: echo "All linting and test suite runs completed successfully."
-
+        run: echo "All linting, test suite, and tools runs completed successfully."
