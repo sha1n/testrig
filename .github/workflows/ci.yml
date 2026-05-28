@@ -103,3 +103,12 @@ jobs:
           files: ${{ matrix.module }}/coverage.out
           flags: ${{ matrix.module == '.' && 'root' || matrix.module }}
           fail_ci_if_error: true
+
+  required-checks:
+    name: Required Checks
+    needs: [lint, build-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Success
+        run: echo "All linting and test suite runs completed successfully."
+
