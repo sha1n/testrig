@@ -12,7 +12,7 @@ import (
 
 	wiremock "github.com/wiremock/go-wiremock"
 
-	"github.com/sha1n/testrig/services/oidc"
+	"github.com/sha1n/testrig/oidc"
 )
 
 const (

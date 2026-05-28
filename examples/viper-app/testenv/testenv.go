@@ -9,9 +9,9 @@ import (
 
 	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/examples/internal/seed"
-	"github.com/sha1n/testrig/services/oidc"
-	"github.com/sha1n/testrig/services/postgres"
-	"github.com/sha1n/testrig/services/wiremock"
+	"github.com/sha1n/testrig/oidc"
+	"github.com/sha1n/testrig/postgres"
+	"github.com/sha1n/testrig/wiremock"
 )
 
 // Audience is the OAuth audience the OIDC issuer accepts and the app's

@@ -9,7 +9,7 @@ The `oidc.Issuer` is a fully-functional OIDC issuer that binds to a random port 
 This is a separate Go module. Pin to the current prototype tag while the API iterates:
 
 ```
-go get github.com/sha1n/testrig/services/oidc@v0.0.0-prototype.1
+go get github.com/sha1n/testrig/oidc@v0.0.0-prototype.1
 ```
 
 It transitively pulls in `github.com/sha1n/testrig` and `github.com/golang-jwt/jwt/v5`. No Docker required. See the top-level README for guidance on `@latest` vs. explicit pinning.
@@ -29,7 +29,7 @@ import (
     "time"
 
     "github.com/sha1n/testrig"
-    "github.com/sha1n/testrig/services/oidc"
+    "github.com/sha1n/testrig/oidc"
 )
 
 func TestValidator(t *testing.T) {

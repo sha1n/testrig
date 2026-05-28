@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/sha1n/testrig"
-	"github.com/sha1n/testrig/services/postgres"
+	"github.com/sha1n/testrig/postgres"
 )
 
 func TestPostgres_Defaults(t *testing.T) {
