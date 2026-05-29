@@ -117,6 +117,10 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go tool golangci-lint run ./...
 
+      - name: Verify dependencies are tidy
+        working-directory: ${{ matrix.module }}
+        run: go mod tidy -diff
+
   build-test:
     name: Build & Test
     needs: detect-changes
@@ -226,6 +230,10 @@ jobs:
       - name: golangci-lint
         working-directory: tools
         run: go tool golangci-lint run ./...
+
+      - name: Verify dependencies are tidy
+        working-directory: tools
+        run: go mod tidy -diff
   required-checks:
     name: Required Checks
     needs: [detect-changes, lint, build-test, tools]
