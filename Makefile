@@ -29,7 +29,7 @@ format: go-format
 
 ## lint: Runs all linters including go vet and golangci-lint
 .PHONY: lint
-lint: go-lint golangci-lint
+lint: go-lint golangci-lint go-tidy-check
 
 ## test: Runs all Go tests
 .PHONY: test
@@ -66,6 +66,14 @@ golangci-lint:
 go-format:
 	@echo "  >  Formating source files..."
 	@if [ -n "$(GOFILES)" ]; then gofmt -s -w $(GOFILES); fi
+
+.PHONY: go-tidy-check
+go-tidy-check:
+	@echo "  >  Verifying Go modules are tidy..."
+	@for mod in $(MODULES); do \
+		echo "  >  tidy check $$mod"; \
+		(cd $$mod && go mod tidy -diff) || exit $$?; \
+	done
 
 ## coverage: Runs tests with coverage in every module (writes <module>/coverage.out)
 .PHONY: coverage
