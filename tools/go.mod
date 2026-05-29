@@ -4,7 +4,10 @@ go 1.25.0
 
 require golang.org/x/mod v0.36.0
 
-require github.com/stretchr/testify v1.11.1
+require (
+	github.com/stretchr/testify v1.11.1
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect
@@ -203,7 +206,6 @@ require (
 	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/tools v0.44.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	honnef.co/go/tools v0.7.0 // indirect
 	mvdan.cc/gofumpt v0.9.2 // indirect
 	mvdan.cc/unparam v0.0.0-20251027182757-5beb8c8f8f15 // indirect

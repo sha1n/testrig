@@ -32,15 +32,24 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            pkg/dockerlog/go.sum
-            oidc/go.sum
-            postgres/go.sum
-            wiremock/go.sum
-            examples/go.sum
-            tools/go.sum
+          cache: false
+
+      - name: Cache Go Modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-mod-${{ matrix.module }}-${{ hashFiles('go.sum', format('{0}/go.sum', matrix.module)) }}
+          restore-keys: |
+            ${{ runner.os }}-go-mod-${{ matrix.module }}-
+
+      - name: Cache Go Build Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-${{ matrix.module }}-${{ hashFiles('go.sum', format('{0}/go.sum', matrix.module)) }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ matrix.module }}-${{ hashFiles('go.sum', format('{0}/go.sum', matrix.module)) }}-
+            ${{ runner.os }}-go-build-${{ matrix.module }}-
 
       - name: Download tool dependencies
         working-directory: tools
@@ -75,15 +84,24 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            pkg/dockerlog/go.sum
-            oidc/go.sum
-            postgres/go.sum
-            wiremock/go.sum
-            examples/go.sum
-            tools/go.sum
+          cache: false
+
+      - name: Cache Go Modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-mod-${{ matrix.module }}-${{ hashFiles('go.sum', format('{0}/go.sum', matrix.module)) }}
+          restore-keys: |
+            ${{ runner.os }}-go-mod-${{ matrix.module }}-
+
+      - name: Cache Go Build Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-${{ matrix.module }}-${{ hashFiles('go.sum', format('{0}/go.sum', matrix.module)) }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ matrix.module }}-${{ hashFiles('go.sum', format('{0}/go.sum', matrix.module)) }}-
+            ${{ runner.os }}-go-build-${{ matrix.module }}-
 
       - name: Download dependencies
         working-directory: ${{ matrix.module }}
@@ -120,15 +138,24 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            pkg/dockerlog/go.sum
-            oidc/go.sum
-            postgres/go.sum
-            wiremock/go.sum
-            examples/go.sum
-            tools/go.sum
+          cache: false
+
+      - name: Cache Go Modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-mod-tools-${{ hashFiles('go.sum', 'tools/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-mod-tools-
+
+      - name: Cache Go Build Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-tools-${{ hashFiles('go.sum', 'tools/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-tools-${{ hashFiles('go.sum', 'tools/go.sum') }}-
+            ${{ runner.os }}-go-build-tools-
 
       - name: Run tools tests
         working-directory: tools

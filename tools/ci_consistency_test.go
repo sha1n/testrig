@@ -11,16 +11,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/mod/modfile"
+	"gopkg.in/yaml.v3"
 )
 
 // TestCIMatrixMatchesGoWork enforces that .github/workflows/ci.yml stays in
 // sync with go.work. go.work is the single source of truth for the multi-module
 // workspace; every module listed there (except tools/, which has no testable
-// code) must appear in:
-//
-//   - the `module` matrix of the lint job
-//   - the `module` matrix of the build-test job
-//   - both jobs' cache-dependency-path lists (as <module>/go.sum)
+// code) must appear in the `module` matrix of both the lint and build-test jobs.
 //
 // The test fails fast with a clear message if any list drifts, preventing the
 // silent "added a module to go.work but CI doesn't run it" failure mode.
@@ -52,64 +49,6 @@ func TestCIMatrixMatchesGoWork(t *testing.T) {
 		slices.Sort(got)
 		assert.Equal(t, expected, got, "matrix #%d does not match go.work modules", i+1)
 	}
-
-	// Each cache-dependency-path block must independently list go.sum for
-	// every workspace module that has one. A presence-only check on the full
-	// YAML cannot detect drift between jobs.
-	blocks := extractCacheDepPaths(ci)
-	require.NotEmpty(t, blocks, "expected at least one cache-dependency-path block in ci.yml")
-
-	for i, paths := range blocks {
-		for _, m := range workModules {
-			if m == "" {
-				continue // root go.sum required, asserted by the "go.sum" check below
-			}
-			needle := m + "/go.sum"
-			assert.Contains(t, paths, needle, "cache-dependency-path block #%d is missing %q", i+1, needle)
-		}
-		assert.Contains(t, paths, "go.sum", "cache-dependency-path block #%d is missing root \"go.sum\"", i+1)
-	}
-}
-
-// extractCacheDepPaths returns the entries of every `cache-dependency-path: |`
-// block in the workflow, one slice per block. The block grammar in GitHub
-// Actions YAML is a literal block scalar: each entry sits on its own line at
-// a deeper indent than the key. Parsing terminates when indent returns to
-// the key's level or shallower.
-func extractCacheDepPaths(yaml string) [][]string {
-	yaml = strings.ReplaceAll(yaml, "\r\n", "\n")
-	const key = "cache-dependency-path:"
-	var blocks [][]string
-	lines := strings.Split(yaml, "\n")
-	for i := 0; i < len(lines); i++ {
-		trimmedLine := strings.TrimLeft(lines[i], " \t")
-		if !strings.HasPrefix(trimmedLine, key) {
-			continue
-		}
-		idx := strings.Index(lines[i], key)
-		// Block scalar marker `|` must follow the key for this form. Anything
-		// else (e.g., a flow-scalar value on the same line) is out of scope.
-		if !strings.Contains(lines[i][idx+len(key):], "|") {
-			continue
-		}
-		keyIndent := idx
-		var entries []string
-		for j := i + 1; j < len(lines); j++ {
-			line := lines[j]
-			trimmed := strings.TrimLeft(line, " \t")
-			if trimmed == "" {
-				continue // blank lines don't terminate the block
-			}
-			entryIndent := len(line) - len(trimmed)
-			if entryIndent <= keyIndent {
-				break
-			}
-			entries = append(entries, strings.TrimSpace(trimmed))
-			i = j
-		}
-		blocks = append(blocks, entries)
-	}
-	return blocks
 }
 
 // parseGoWorkModules returns each module path from the `use` directives of a
@@ -259,59 +198,119 @@ func TestExtractMatrixModules_MultipleJobs(t *testing.T) {
 	assert.Len(t, got, 2)
 }
 
-// TestExtractCacheDepPaths_ParsesPerBlock verifies the helper returns one list
-// per cache-dependency-path block. A presence-only check on the full YAML
-// cannot detect drift between jobs (e.g., a sum file in the lint block but
-// missing from the build-test block); per-block parsing can.
-func TestExtractCacheDepPaths_ParsesPerBlock(t *testing.T) {
-	fixture := `jobs:
-  lint:
-    steps:
-      - uses: actions/setup-go@v6
-        with:
-          cache-dependency-path: |
-            go.sum
-            services/a/go.sum
-            services/b/go.sum
-  build:
-    steps:
-      - uses: actions/setup-go@v6
-        with:
-          cache-dependency-path: |
-            go.sum
-            services/a/go.sum
-`
-	got := extractCacheDepPaths(fixture)
-	require.Len(t, got, 2)
-	wantLint := []string{"go.sum", "services/a/go.sum", "services/b/go.sum"}
-	wantBuild := []string{"go.sum", "services/a/go.sum"}
-	assert.Equal(t, wantLint, got[0])
-	assert.Equal(t, wantBuild, got[1])
-}
-
-// TestExtractCacheDepPaths_DetectsDriftBetweenBlocks demonstrates the bug the
-// old presence-only check missed: a per-block view sees that block 2 is
-// missing services/b/go.sum even though the string still appears elsewhere
-// in the YAML.
-func TestExtractCacheDepPaths_DetectsDriftBetweenBlocks(t *testing.T) {
-	fixture := `cache-dependency-path: |
-  go.sum
-  services/a/go.sum
-  services/b/go.sum
----
-cache-dependency-path: |
-  go.sum
-  services/a/go.sum
-`
-	got := extractCacheDepPaths(fixture)
-	require.Len(t, got, 2)
-	assert.NotContains(t, got[1], "services/b/go.sum")
-	assert.Contains(t, got[0], "services/b/go.sum")
-}
-
 func readFile(t *testing.T, pathStr string) string {
 	t.Helper()
 	b, err := os.ReadFile(pathStr)
 	require.NoError(t, err, "read %s failed", pathStr)
 	return string(b)
+}
+
+type Step struct {
+	Name string                 `yaml:"name"`
+	Uses string                 `yaml:"uses"`
+	With map[string]interface{} `yaml:"with"`
+}
+
+type Job struct {
+	Strategy struct {
+		Matrix map[string]interface{} `yaml:"matrix"`
+	} `yaml:"strategy"`
+	Steps []Step `yaml:"steps"`
+}
+
+type Workflow struct {
+	Jobs map[string]Job `yaml:"jobs"`
+}
+
+// TestCIGoCacheConfiguration ensures that every job in .github/workflows/ci.yml
+// that sets up Go:
+// 1. Explicitly disables setup-go's internal cache to avoid conflict.
+// 2. Implements separate custom cache steps for Go modules and Go build cache (actions/cache).
+// 3. Verifies that the module cache does NOT include github.sha (to prevent redundant uploads).
+// 4. Verifies that the build cache DOES include github.sha (for incremental updates).
+// 5. Ensures correct dependency hashes and matrix parameters are included in cache keys.
+func TestCIGoCacheConfiguration(t *testing.T) {
+	ciPath := filepath.Join("..", ".github", "workflows", "ci.yml")
+	ciBytes, err := os.ReadFile(ciPath)
+	require.NoError(t, err)
+
+	var wf Workflow
+	err = yaml.Unmarshal(ciBytes, &wf)
+	require.NoError(t, err)
+
+	for jobName, job := range wf.Jobs {
+		var setupGoStep *Step
+		var cacheSteps []*Step
+		for i := range job.Steps {
+			step := &job.Steps[i]
+			if strings.HasPrefix(step.Uses, "actions/setup-go@") {
+				setupGoStep = step
+			} else if strings.HasPrefix(step.Uses, "actions/cache@") {
+				cacheSteps = append(cacheSteps, step)
+			}
+		}
+
+		if setupGoStep == nil {
+			continue
+		}
+
+		t.Run(jobName, func(t *testing.T) {
+			// Verify setup-go explicitly sets cache: false
+			cacheVal, hasCache := setupGoStep.With["cache"]
+			assert.True(t, hasCache, "setup-go step must explicitly set 'cache' field")
+			if cacheBool, ok := cacheVal.(bool); ok {
+				assert.False(t, cacheBool, "setup-go step 'cache' must be false to avoid conflict with custom cache")
+			} else if cacheStr, ok := cacheVal.(string); ok {
+				assert.Equal(t, "false", cacheStr, "setup-go step 'cache' must be false to avoid conflict with custom cache")
+			} else {
+				t.Errorf("setup-go step 'cache' value must be boolean or string: got %T", cacheVal)
+			}
+
+			// Verify we have exactly two cache steps
+			require.Len(t, cacheSteps, 2, "job uses setup-go but does not have exactly two custom cache steps (modules and build cache)")
+
+			var modCacheStep *Step
+			var buildCacheStep *Step
+
+			for _, cs := range cacheSteps {
+				pathVal, hasPath := cs.With["path"]
+				require.True(t, hasPath, "cache step must define 'path'")
+				pathStr, ok := pathVal.(string)
+				require.True(t, ok, "cache step 'path' must be a string")
+
+				if strings.Contains(pathStr, "~/go/pkg/mod") {
+					modCacheStep = cs
+				} else if strings.Contains(pathStr, "~/.cache/go-build") {
+					buildCacheStep = cs
+				}
+			}
+
+			require.NotNil(t, modCacheStep, "missing Go module cache step targeting ~/go/pkg/mod")
+			require.NotNil(t, buildCacheStep, "missing Go build cache step targeting ~/.cache/go-build")
+
+			// Check Module Cache Key
+			modKeyVal, hasModKey := modCacheStep.With["key"]
+			require.True(t, hasModKey, "module cache step must define 'key'")
+			modKeyStr, ok := modKeyVal.(string)
+			require.True(t, ok, "module cache step 'key' must be a string")
+			assert.Contains(t, modKeyStr, "hashFiles(", "module cache step key must include dependency hash")
+			assert.NotContains(t, modKeyStr, "github.sha", "module cache step key must NOT include github.sha to avoid redundant module cache uploads")
+
+			// Check Build Cache Key
+			buildKeyVal, hasBuildKey := buildCacheStep.With["key"]
+			require.True(t, hasBuildKey, "build cache step must define 'key'")
+			buildKeyStr, ok := buildKeyVal.(string)
+			require.True(t, ok, "build cache step 'key' must be a string")
+			assert.Contains(t, buildKeyStr, "hashFiles(", "build cache step key must include dependency hash")
+			assert.Contains(t, buildKeyStr, "github.sha", "build cache step key must include github.sha for incremental compiler caching")
+
+			// Verify matrix setups to prevent stampedes
+			if job.Strategy.Matrix != nil {
+				if _, hasModule := job.Strategy.Matrix["module"]; hasModule {
+					assert.Contains(t, modKeyStr, "matrix.module", "matrix job module cache key must include matrix.module to avoid collisions")
+					assert.Contains(t, buildKeyStr, "matrix.module", "matrix job build cache key must include matrix.module to avoid collisions")
+				}
+			}
+		})
+	}
 }
