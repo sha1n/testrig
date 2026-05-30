@@ -8,10 +8,10 @@ require (
 	github.com/knadh/koanf/providers/confmap v1.0.0
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/v2 v2.3.4
-	github.com/sha1n/testrig v0.0.0-prototype.1
-	github.com/sha1n/testrig/services/oidc v0.0.0
-	github.com/sha1n/testrig/services/postgres v0.0.0
-	github.com/sha1n/testrig/services/wiremock v0.0.0
+	github.com/sha1n/testrig v0.0.0-alpha.2
+	github.com/sha1n/testrig/services/oidc v0.0.0-alpha.2
+	github.com/sha1n/testrig/services/postgres v0.0.0-alpha.2
+	github.com/sha1n/testrig/services/wiremock v0.0.0-alpha.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/wiremock/go-wiremock v1.16.0
@@ -66,7 +66,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
-	github.com/sha1n/testrig/dockerlog v0.0.0-prototype.1 // indirect
+	github.com/sha1n/testrig/dockerlog v0.0.0-alpha.2 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.3 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
