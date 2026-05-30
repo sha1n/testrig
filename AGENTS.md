@@ -68,3 +68,4 @@ Use the provided `Makefile` targets to build, lint, and test across the workspac
 * `make lint`: Performs `go vet` and runs `golangci-lint` (using the version pinned in `tools/go.mod`).
 * `make build-examples`: Compiles example application binaries into `bin/`.
 * `make go-get`: Synchronizes workspace dependencies.
+* `make tidy`: Runs `go mod tidy` across all modules.
