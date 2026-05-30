@@ -1380,6 +1380,7 @@ func TestSupervisor_StartSucceedsImmediatelyPostExit(t *testing.T) {
 		t.Fatal("expected second Start to succeed and register logger")
 	}
 }
+
 // ─── lineWriter allocations ────────────────────────────────────────────────────
 
 func TestLineWriter_AllocationsPerLine(t *testing.T) {
@@ -1542,10 +1543,10 @@ func TestSupervisor_StartCancelsPreviousContext(t *testing.T) {
 
 type dummyHandler struct{}
 
-func (dummyHandler) Enabled(context.Context, slog.Level) bool  { return true }
-func (dummyHandler) Handle(context.Context, slog.Record) error { return nil }
+func (dummyHandler) Enabled(context.Context, slog.Level) bool   { return true }
+func (dummyHandler) Handle(context.Context, slog.Record) error  { return nil }
 func (d dummyHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return d }
-func (d dummyHandler) WithGroup(name string) slog.Handler    { return d }
+func (d dummyHandler) WithGroup(name string) slog.Handler       { return d }
 
 func TestLineWriter_Allocations(t *testing.T) {
 	w := &lineWriter{
@@ -1692,4 +1693,3 @@ func TestLineWriter_ContextNotNil(t *testing.T) {
 		t.Fatal("handler was never called — test is not exercising the code path")
 	}
 }
-

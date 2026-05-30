@@ -75,6 +75,15 @@ go-tidy-check:
 		(cd $$mod && go mod tidy -diff) || exit $$?; \
 	done
 
+## tidy: Runs go mod tidy on all modules
+.PHONY: tidy
+tidy:
+	@echo "  >  Running go mod tidy on all modules..."
+	@for mod in $(MODULES); do \
+		echo "  >  tidy $$mod"; \
+		(cd $$mod && go mod tidy) || exit $$?; \
+	done
+
 ## coverage: Runs tests with coverage in every module (writes <module>/coverage.out)
 .PHONY: coverage
 coverage:
