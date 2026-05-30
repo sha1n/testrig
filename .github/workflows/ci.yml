@@ -89,7 +89,7 @@ jobs:
           cache: false
 
       - name: Cache Go Modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/go/pkg/mod
           key: ${{ runner.os }}-go-mod-${{ matrix.module }}-${{ hashFiles('go.sum', format('{0}/go.sum', matrix.module)) }}
@@ -97,7 +97,7 @@ jobs:
             ${{ runner.os }}-go-mod-${{ matrix.module }}-
 
       - name: Cache Go Build Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/go-build
           key: ${{ runner.os }}-go-build-${{ matrix.module }}-${{ hashFiles('go.sum', format('{0}/go.sum', matrix.module)) }}-${{ github.sha }}
@@ -147,7 +147,7 @@ jobs:
           cache: false
 
       - name: Cache Go Modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/go/pkg/mod
           key: ${{ runner.os }}-go-mod-${{ matrix.module }}-${{ hashFiles('go.sum', format('{0}/go.sum', matrix.module)) }}
@@ -155,7 +155,7 @@ jobs:
             ${{ runner.os }}-go-mod-${{ matrix.module }}-
 
       - name: Cache Go Build Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/go-build
           key: ${{ runner.os }}-go-build-${{ matrix.module }}-${{ hashFiles('go.sum', format('{0}/go.sum', matrix.module)) }}-${{ github.sha }}
@@ -203,7 +203,7 @@ jobs:
           cache: false
 
       - name: Cache Go Modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/go/pkg/mod
           key: ${{ runner.os }}-go-mod-tools-${{ hashFiles('go.sum', 'tools/go.sum') }}
@@ -211,7 +211,7 @@ jobs:
             ${{ runner.os }}-go-mod-tools-
 
       - name: Cache Go Build Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/go-build
           key: ${{ runner.os }}-go-build-tools-${{ hashFiles('go.sum', 'tools/go.sum') }}-${{ github.sha }}
