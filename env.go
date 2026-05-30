@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/sha1n/testrig/api"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -21,14 +22,14 @@ type Env struct {
 	// Start is invoked.
 	name   string
 	logger *slog.Logger
-	hooks  []LifecycleHook
+	hooks  []api.LifecycleHook
 	tracks []*Stages
 
 	// Mutable lifecycle state, guarded by mu.
 	mu         sync.RWMutex
 	state      envState
-	properties Properties    // non-nil iff state != stateIdle
-	started    [][][]Service // started[trackIdx][stageIdx] = services that successfully started in that stage
+	properties api.Properties    // non-nil iff state != stateIdle
+	started    [][][]api.Service // started[trackIdx][stageIdx] = services that successfully started in that stage
 }
 
 type envState int
@@ -70,7 +71,7 @@ func New(name string) *Env {
 // services in this track will start concurrently with each other and with
 // any other tracks already registered. Multiple With calls accumulate as
 // distinct tracks. Panics if any service is nil.
-func (e *Env) With(services ...Service) *Env {
+func (e *Env) With(services ...api.Service) *Env {
 	for i, s := range services {
 		if s == nil {
 			panic(fmt.Sprintf("testrig: With received a nil Service at index %d", i))
@@ -102,7 +103,7 @@ func (e *Env) WithLogger(logger *slog.Logger) *Env {
 
 // WithLifecycleHooks appends lifecycle hooks (accumulative across calls).
 // Panics if any hook is nil.
-func (e *Env) WithLifecycleHooks(hooks ...LifecycleHook) *Env {
+func (e *Env) WithLifecycleHooks(hooks ...api.LifecycleHook) *Env {
 	for i, h := range hooks {
 		if h == nil {
 			panic(fmt.Sprintf("testrig: WithLifecycleHooks received a nil LifecycleHook at index %d", i))
@@ -121,13 +122,13 @@ func (e *Env) Name() string {
 // an empty map when the env is idle. The same data is returned directly
 // by Start; Properties is for callers that only hold an *Env (lifecycle
 // hooks internally, code paths that didn't capture Start's return).
-func (e *Env) Properties() Properties {
+func (e *Env) Properties() api.Properties {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	if e.properties == nil {
-		return make(Properties)
+		return make(api.Properties)
 	}
-	return e.properties.snapshot()
+	return e.properties.Snapshot()
 }
 
 // Start brings every registered track up. Tracks run concurrently with
@@ -145,7 +146,7 @@ func (e *Env) Properties() Properties {
 // passed to AfterStart hooks: caller and hooks observe identical state.
 // The map is owned by the caller; mutating it has no effect on the env.
 // On any failure path the first return value is nil.
-func (e *Env) Start(ctx context.Context) (Properties, error) {
+func (e *Env) Start(ctx context.Context) (api.Properties, error) {
 	if err := e.beginStart(); err != nil {
 		return nil, err
 	}
@@ -162,7 +163,7 @@ func (e *Env) Start(ctx context.Context) (Properties, error) {
 
 	e.mu.Lock()
 	e.state = stateRunning
-	snapshot := e.properties.snapshot()
+	snapshot := e.properties.Snapshot()
 	e.mu.Unlock()
 
 	if err := e.runAfterStartHooks(ctx, snapshot); err != nil {
@@ -203,7 +204,7 @@ func (e *Env) runTrack(ctx context.Context, trackIdx int, track *Stages) error {
 // recordStarted appends svc to e.started[trackIdx][stageIdx]. The outer
 // and middle dimensions are pre-allocated in beginStart to match the
 // shape of e.tracks. Caller must hold e.mu.
-func (e *Env) recordStarted(trackIdx, stageIdx int, svc Service) {
+func (e *Env) recordStarted(trackIdx, stageIdx int, svc api.Service) {
 	e.started[trackIdx][stageIdx] = append(e.started[trackIdx][stageIdx], svc)
 }
 
@@ -221,10 +222,10 @@ func (e *Env) beginStart() error {
 	if err := validateServiceNames(e.tracks); err != nil {
 		return err
 	}
-	e.properties = make(Properties)
-	e.started = make([][][]Service, len(e.tracks))
+	e.properties = make(api.Properties)
+	e.started = make([][][]api.Service, len(e.tracks))
 	for i, t := range e.tracks {
-		e.started[i] = make([][]Service, len(t.stages))
+		e.started[i] = make([][]api.Service, len(t.stages))
 	}
 	e.state = stateStarting
 	return nil
@@ -251,7 +252,7 @@ func (e *Env) Stop(ctx context.Context) error {
 // returning the started-services structure to tear down. Returns
 // ok=false if the env is idle or another goroutine is already stopping
 // it — making Stop idempotent under concurrent callers.
-func (e *Env) beginStop() ([][][]Service, bool) {
+func (e *Env) beginStop() ([][][]api.Service, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.state != stateRunning && e.state != stateStarting {
@@ -259,11 +260,11 @@ func (e *Env) beginStop() ([][][]Service, bool) {
 	}
 	e.state = stateStopping
 	// Deep copy so the running goroutines and the stopper don't alias.
-	started := make([][][]Service, len(e.started))
+	started := make([][][]api.Service, len(e.started))
 	for i, track := range e.started {
-		started[i] = make([][]Service, len(track))
+		started[i] = make([][]api.Service, len(track))
 		for j, stage := range track {
-			started[i][j] = append([]Service(nil), stage...)
+			started[i][j] = append([]api.Service(nil), stage...)
 		}
 	}
 	return started, true
@@ -271,7 +272,7 @@ func (e *Env) beginStop() ([][][]Service, bool) {
 
 // stopTracks stops each track concurrently. Within a track, stages run
 // in reverse order; within a stage, services stop in parallel.
-func (e *Env) stopTracks(ctx context.Context, started [][][]Service) error {
+func (e *Env) stopTracks(ctx context.Context, started [][][]api.Service) error {
 	g, gctx := errgroup.WithContext(ctx)
 	for _, trackStarted := range started {
 		ts := trackStarted
@@ -282,7 +283,7 @@ func (e *Env) stopTracks(ctx context.Context, started [][][]Service) error {
 
 // stopTrack stops one track's services in reverse-stage order. Within a
 // stage, services stop concurrently. Errors from all stages are joined.
-func (e *Env) stopTrack(ctx context.Context, trackStarted [][]Service) error {
+func (e *Env) stopTrack(ctx context.Context, trackStarted [][]api.Service) error {
 	var errs []error
 	for i := len(trackStarted) - 1; i >= 0; i-- {
 		stage := trackStarted[i]
@@ -317,7 +318,7 @@ func (e *Env) finishStop() {
 // caller-supplied property snapshot. The snapshot is shared with the
 // value returned by Start, so hooks and the caller observe identical
 // state. Returns the first hook error.
-func (e *Env) runAfterStartHooks(ctx context.Context, snapshot Properties) error {
+func (e *Env) runAfterStartHooks(ctx context.Context, snapshot api.Properties) error {
 	if len(e.hooks) == 0 {
 		return nil
 	}
@@ -337,7 +338,7 @@ func (e *Env) runAfterStopHooks(ctx context.Context) error {
 		return nil
 	}
 	e.mu.RLock()
-	propSnapshot := e.properties.snapshot()
+	propSnapshot := e.properties.Snapshot()
 	e.mu.RUnlock()
 
 	var errs []error
@@ -371,3 +372,12 @@ func validateServiceNames(tracks []*Stages) error {
 	}
 	return nil
 }
+
+type envHandle struct {
+	env  *Env
+	name string
+}
+
+func (h *envHandle) Name() string               { return h.env.Name() }
+func (h *envHandle) Logger() *slog.Logger       { return scopedLogger(h.env.logger, h.name) }
+func (h *envHandle) Properties() api.Properties { return h.env.Properties() }

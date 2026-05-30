@@ -16,7 +16,7 @@ server/              — server_test.go: integration tests; share env via TestMa
 The HTTP server itself (handlers, store, routes) lives in
 `examples/internal/sampleapp` — shared with `examples/koanf-app` since
 that code has no config-library opinion. The custom schema-seed
-`testrig.Service` lives in `examples/internal/seed` for the same reason.
+`api.Service` lives in `examples/internal/seed` for the same reason.
 
 ## Run
 

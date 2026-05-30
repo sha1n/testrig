@@ -1,4 +1,4 @@
-// Package seed provides a custom testrig.Service that applies schema DDL
+// Package seed provides a custom api.Service that applies schema DDL
 // to a Postgres service. It is non-dockerized — it runs in the test
 // process and depends on a *postgres.Postgres being already started.
 //
@@ -14,8 +14,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sha1n/testrig"
-	"github.com/sha1n/testrig/postgres"
+	"github.com/sha1n/testrig/api"
+	"github.com/sha1n/testrig/services/postgres"
 )
 
 const schemaDDL = `
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS responses (
     PRIMARY KEY (user_id, key)
 )`
 
-// SchemaSeed implements testrig.Service. Construct with New, register
+// SchemaSeed implements api.Service. Construct with New, register
 // with Env.WithStages after the Postgres service it depends on.
 type SchemaSeed struct {
 	name string
@@ -39,13 +39,13 @@ func New(pg *postgres.Postgres) *SchemaSeed {
 	return &SchemaSeed{name: "seed", pg: pg}
 }
 
-// Name implements testrig.Service.
+// Name implements api.Service.
 func (s *SchemaSeed) Name() string { return s.name }
 
 // Start opens a connection to the Postgres service and applies the schema.
 // Publishes the property "seed.applied" = "true" so tests can assert that
 // the service ran.
-func (s *SchemaSeed) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Properties, error) {
+func (s *SchemaSeed) Start(ctx context.Context, env api.EnvHandle) (api.Properties, error) {
 	env.Logger().Info("applying schema")
 	db, err := s.pg.DB(ctx)
 	if err != nil {
@@ -56,7 +56,7 @@ func (s *SchemaSeed) Start(ctx context.Context, env testrig.EnvHandle) (testrig.
 	if _, err := db.ExecContext(ctx, schemaDDL); err != nil {
 		return nil, fmt.Errorf("seed: apply schema: %w", err)
 	}
-	return testrig.Properties{"seed.applied": "true"}, nil
+	return api.Properties{"seed.applied": "true"}, nil
 }
 
 // Stop is a no-op: the schema dies with its container.

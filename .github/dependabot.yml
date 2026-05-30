@@ -7,25 +7,25 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: "gomod"
-    directory: "/pkg/dockerlog"
+    directory: "/dockerlog"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
 
   - package-ecosystem: "gomod"
-    directory: "/oidc"
+    directory: "/services/oidc"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
 
   - package-ecosystem: "gomod"
-    directory: "/postgres"
+    directory: "/services/postgres"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5
 
   - package-ecosystem: "gomod"
-    directory: "/wiremock"
+    directory: "/services/wiremock"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5

@@ -14,7 +14,7 @@ server/              — server_test.go: integration tests; share env via TestMa
 ```
 
 The HTTP server (handlers, store, routes) is in
-`examples/internal/sampleapp`; the custom schema-seed `testrig.Service`
+`examples/internal/sampleapp`; the custom schema-seed `api.Service`
 is in `examples/internal/seed` — both shared with `examples/viper-app`.
 
 ## Run

@@ -3,6 +3,8 @@ package testrig
 import (
 	"sort"
 	"testing"
+
+	"github.com/sha1n/testrig/api"
 )
 
 // SetEnvVars sets the properties as OS environment variables and automatically
@@ -13,7 +15,7 @@ import (
 // has already called t.Parallel(). For parallel-safe tests, pass env.Properties()
 // directly to your config library's native API (e.g., viper.Set, koanf confmap.Provider)
 // instead of mutating OS environment variables.
-func SetEnvVars(t *testing.T, props Properties) {
+func SetEnvVars(t *testing.T, props api.Properties) {
 	t.Helper()
 
 	keys := make([]string, 0, len(props))

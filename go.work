@@ -2,10 +2,10 @@ go 1.25.0
 
 use (
 	.
+	./dockerlog
 	./examples
-	./oidc
-	./pkg/dockerlog
-	./postgres
+	./services/oidc
+	./services/postgres
+	./services/wiremock
 	./tools
-	./wiremock
 )
