@@ -1,47 +1,37 @@
 package postgres_test
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/postgres"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPostgres_Defaults(t *testing.T) {
 	tk := postgres.New("test-db")
 
-	if tk.Name() != "test-db" {
-		t.Errorf("Unexpected name: %s", tk.Name())
-	}
+	assert.Equal(t, "test-db", tk.Name())
 
 	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = tk.Stop(context.Background()) }()
 
-	if props["test-db.host"] != "localhost" {
-		t.Errorf("Expected host localhost, got %s", props["test-db.host"])
-	}
-	if props["test-db.port"] == "" {
-		t.Error("Expected port to be populated")
-	}
-	if props["test-db.user"] != "user" {
-		t.Errorf("Expected default user, got %s", props["test-db.user"])
-	}
-	if props["test-db.dbname"] != "testdb" {
-		t.Errorf("Expected default dbname, got %s", props["test-db.dbname"])
-	}
+	assert.Equal(t, "localhost", props["test-db.host"])
+	assert.NotEmpty(t, props["test-db.port"])
+	assert.Equal(t, "user", props["test-db.user"])
+	assert.Equal(t, "testdb", props["test-db.dbname"])
+
 	dsn := props["test-db.dsn"]
-	if !strings.HasPrefix(dsn, "postgres://user:password@localhost:") {
-		t.Errorf("Expected DSN prefix, got: %s", dsn)
-	}
-	if !strings.HasSuffix(dsn, "/testdb?sslmode=disable") {
-		t.Errorf("Expected DSN suffix, got: %s", dsn)
-	}
+	assert.True(t, strings.HasPrefix(dsn, "postgres://user:password@localhost:"))
+	assert.True(t, strings.HasSuffix(dsn, "/testdb?sslmode=disable"))
 }
 
 func TestPostgres_Configured(t *testing.T) {
@@ -52,48 +42,30 @@ func TestPostgres_Configured(t *testing.T) {
 		WithUsername("custom-user").
 		WithPassword("custom-password")
 
-	if tk.Name() != "custom-db" {
-		t.Errorf("Unexpected name: %s", tk.Name())
-	}
+	assert.Equal(t, "custom-db", tk.Name())
 
 	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = tk.Stop(context.Background()) }()
 
-	if props["custom-db.user"] != "custom-user" {
-		t.Errorf("Expected user custom-user, got %s", props["custom-db.user"])
-	}
-	if props["custom-db.password"] != "custom-password" {
-		t.Errorf("Expected password, got %s", props["custom-db.password"])
-	}
-	if props["custom-db.dbname"] != "custom-dbname" {
-		t.Errorf("Expected dbname, got %s", props["custom-db.dbname"])
-	}
+	assert.Equal(t, "custom-user", props["custom-db.user"])
+	assert.Equal(t, "custom-password", props["custom-db.password"])
+	assert.Equal(t, "custom-dbname", props["custom-db.dbname"])
+
 	dsn := props["custom-db.dsn"]
-	if !strings.HasPrefix(dsn, "postgres://custom-user:custom-password@localhost:") {
-		t.Errorf("Expected DSN prefix, got: %s", dsn)
-	}
-	if !strings.HasSuffix(dsn, "/custom-dbname?sslmode=disable") {
-		t.Errorf("Expected DSN suffix, got: %s", dsn)
-	}
+	assert.True(t, strings.HasPrefix(dsn, "postgres://custom-user:custom-password@localhost:"))
+	assert.True(t, strings.HasSuffix(dsn, "/custom-dbname?sslmode=disable"))
 }
 
 func TestPostgres_DSNProperty_URLEncodesSpecialChars(t *testing.T) {
 	tk := postgres.New("special").WithPassword("p@ss/word:1")
 
 	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = tk.Stop(context.Background()) }()
 
 	dsn := props["special.dsn"]
-	// '@' encoded as %40, '/' as %2F, ':' as %3A in the userinfo segment.
-	if !strings.Contains(dsn, "p%40ss%2Fword%3A1@") {
-		t.Errorf("DSN userinfo not URL-encoded; got %s", dsn)
-	}
+	assert.Contains(t, dsn, "p%40ss%2Fword%3A1@")
 }
 
 func TestPostgres_PropertyNameOverrides(t *testing.T) {
@@ -107,135 +79,144 @@ func TestPostgres_PropertyNameOverrides(t *testing.T) {
 		WithDatabasePropertyName("DB_NAME")
 
 	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = tk.Stop(context.Background()) }()
 
-	if props["DATABASE_URL"] == "" {
-		t.Error("DATABASE_URL property not published under custom key")
-	}
-	if props["DB_HOST"] == "" {
-		t.Error("DB_HOST property not published under custom key")
-	}
-	if props["DB_PORT"] == "" {
-		t.Error("DB_PORT property not published under custom key")
-	}
-	if props["DB_USER"] != "user" {
-		t.Errorf("DB_USER = %q, want \"user\"", props["DB_USER"])
-	}
-	if props["DB_PASSWORD"] != "password" {
-		t.Errorf("DB_PASSWORD = %q, want \"password\"", props["DB_PASSWORD"])
-	}
-	if props["DB_NAME"] != "app_db" {
-		t.Errorf("DB_NAME = %q, want \"app_db\"", props["DB_NAME"])
-	}
+	assert.NotEmpty(t, props["DATABASE_URL"])
+	assert.NotEmpty(t, props["DB_HOST"])
+	assert.NotEmpty(t, props["DB_PORT"])
+	assert.Equal(t, "user", props["DB_USER"])
+	assert.Equal(t, "password", props["DB_PASSWORD"])
+	assert.Equal(t, "app_db", props["DB_NAME"])
 
 	// Default keys should NOT be present when overridden.
 	for _, k := range []string{"pg.host", "pg.port", "pg.user", "pg.password", "pg.dbname", "pg.dsn"} {
-		if _, ok := props[k]; ok {
-			t.Errorf("default key %q should not be published when overridden", k)
-		}
+		assert.NotContains(t, props, k)
 	}
 }
 
 func TestPostgres_StartTwice_ReturnsError(t *testing.T) {
 	tk := postgres.New("twice")
-	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
-		t.Fatalf("First Start failed: %v", err)
-	}
+	_, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
+	require.NoError(t, err)
 	defer func() { _ = tk.Stop(context.Background()) }()
 
-	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err == nil {
-		t.Error("Expected error on second Start")
-	}
+	_, err = tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
+	assert.Error(t, err, "Expected error on second Start")
 }
 
 func TestPostgres_StopThenStart_Succeeds(t *testing.T) {
-	// A service instance must be reusable across env restart cycles. Stop
-	// releases the container and clears service state so a subsequent Start
-	// builds a fresh one.
 	tk := postgres.New("restart-test")
 	ctx := context.Background()
 
-	if _, err := tk.Start(ctx, testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
-		t.Fatalf("first Start failed: %v", err)
-	}
-	if err := tk.Stop(ctx); err != nil {
-		t.Fatalf("Stop failed: %v", err)
-	}
-	if _, err := tk.Start(ctx, testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
-		t.Fatalf("second Start after Stop must succeed; got: %v", err)
-	}
-	if err := tk.Stop(ctx); err != nil {
-		t.Fatalf("second Stop failed: %v", err)
-	}
+	_, err := tk.Start(ctx, testrig.StubEnvHandle("test", slog.Default(), nil))
+	require.NoError(t, err)
+
+	err = tk.Stop(ctx)
+	require.NoError(t, err)
+
+	_, err = tk.Start(ctx, testrig.StubEnvHandle("test", slog.Default(), nil))
+	require.NoError(t, err)
+
+	err = tk.Stop(ctx)
+	require.NoError(t, err)
 }
 
 func TestPostgres_Start_Error(t *testing.T) {
 	tk := postgres.New("err-db").WithImage("non-existent-image-12345")
 	_, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
-	if err == nil {
-		t.Error("Expected error for non-existent image")
-	}
+	assert.Error(t, err, "Expected error for non-existent image")
 }
 
 func TestPostgres_Stop_NoContainer(t *testing.T) {
 	tk := postgres.New("no-container")
-	if err := tk.Stop(context.Background()); err != nil {
-		t.Errorf("Stop without container should be no-op, got %v", err)
-	}
+	err := tk.Stop(context.Background())
+	assert.NoError(t, err, "Stop without container should be no-op")
 }
 
 func TestPostgres_DSN_MatchesProperty(t *testing.T) {
 	tk := postgres.New("dsn-match").WithPassword("p@ss/word:1")
 
 	props, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = tk.Stop(context.Background()) }()
 
-	if tk.DSN() != props["dsn-match.dsn"] {
-		t.Errorf("DSN() and dsn-match.dsn property should match.\nDSN(): %s\nprop:  %s", tk.DSN(), props["dsn-match.dsn"])
-	}
+	assert.Equal(t, props["dsn-match.dsn"], tk.DSN())
 }
 
 func TestPostgres_DB_PingsAndReturnsConnection(t *testing.T) {
 	tk := postgres.New("db-test")
 
-	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
+	_, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
+	require.NoError(t, err)
 	defer func() { _ = tk.Stop(context.Background()) }()
 
 	db, err := tk.DB(context.Background())
-	if err != nil {
-		t.Fatalf("DB failed: %v", err)
-	}
-	if db == nil {
-		t.Fatal("Expected non-nil *sql.DB")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, db)
 	defer func() { _ = db.Close() }()
 
-	if err := db.Ping(); err != nil {
-		t.Errorf("Ping on returned DB failed: %v", err)
-	}
+	err = db.Ping()
+	assert.NoError(t, err)
 }
 
 func TestPostgres_DB_PingError_PropagatesContextCancel(t *testing.T) {
-	// DB() Pings before returning — verify a cancelled context surfaces as
-	// an error from DB() rather than a deferred dial failure on first query.
 	tk := postgres.New("db-ping-fail")
-	if _, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil)); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
+	_, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", slog.Default(), nil))
+	require.NoError(t, err)
 	defer func() { _ = tk.Stop(context.Background()) }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before DB() runs Ping
 
-	if _, err := tk.DB(ctx); err == nil {
-		t.Fatal("expected error from DB() with cancelled context")
+	_, err = tk.DB(ctx)
+	assert.Error(t, err, "expected error from DB() with cancelled context")
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func eventually(timeout time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	return cond()
+}
+
+func TestPostgres_LogStreaming_ForwardsContainerOutput(t *testing.T) {
+	tk := postgres.New("log-streaming-test").WithLogStreaming()
+
+	buf := &syncBuffer{}
+	h := slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(h)
+
+	_, err := tk.Start(context.Background(), testrig.StubEnvHandle("test", logger, nil))
+	if err != nil {
+		if strings.Contains(err.Error(), "failed to start postgres container") || strings.Contains(err.Error(), "Docker") || strings.Contains(err.Error(), "provider") {
+			t.Skip("Docker is not available; skipping integration test")
+		}
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = tk.Stop(context.Background()) }()
+
+	sentinel := "database system is ready to accept connections"
+	assert.True(t, eventually(15*time.Second, func() bool { return strings.Contains(buf.String(), sentinel) }), "expected logs to contain sentinel")
 }

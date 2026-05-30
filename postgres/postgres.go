@@ -12,6 +12,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/sha1n/testrig"
+	"github.com/sha1n/testrig/pkg/dockerlog"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -54,12 +55,16 @@ type Postgres struct {
 	passwordPropName string
 	dbNamePropName   string
 	dsnPropName      string
+	streaming        bool
+
+	containerRunFn func(context.Context, string, ...testcontainers.ContainerCustomizer) (*postgres.PostgresContainer, error)
 
 	// Runtime state, populated during Start and cleared by Stop.
 	// container != nil is the canonical "currently running" check.
-	container *postgres.PostgresContainer
-	host      string
-	port      string
+	container     *postgres.PostgresContainer
+	host          string
+	port          string
+	logSupervisor dockerlog.Supervisor
 }
 
 // New creates a Postgres service with default configuration. Property keys
@@ -81,6 +86,12 @@ func New(name string) *Postgres {
 		dbNamePropName:   name + ".dbname",
 		dsnPropName:      name + ".dsn",
 	}
+}
+
+// WithLogStreaming enables streaming of Postgres container logs into the testrig logger.
+func (t *Postgres) WithLogStreaming() *Postgres {
+	t.streaming = true
+	return t
 }
 
 // WithImage sets the Docker image name.
@@ -156,8 +167,9 @@ func (t *Postgres) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Pr
 	t.logger = env.Logger()
 	t.logger.Info("🎬 Starting Postgres service", "name", t.name)
 
-	container, err := postgres.Run(ctx,
-		fmt.Sprintf("%s:%s", t.image, t.tag),
+	var container *postgres.PostgresContainer
+	var err error
+	runArgs := []testcontainers.ContainerCustomizer{
 		postgres.WithDatabase(t.dbName),
 		postgres.WithUsername(t.dbUser),
 		postgres.WithPassword(t.dbPassword),
@@ -169,11 +181,33 @@ func (t *Postgres) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Pr
 				wait.ForListeningPort("5432/tcp").
 					WithStartupTimeout(30*time.Second),
 			)),
-	)
+	}
+	if t.containerRunFn != nil {
+		container, err = t.containerRunFn(ctx, fmt.Sprintf("%s:%s", t.image, t.tag), runArgs...)
+	} else {
+		container, err = postgres.Run(ctx, fmt.Sprintf("%s:%s", t.image, t.tag), runArgs...)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to start postgres container: %w", err)
 	}
 	t.container = container
+
+	if t.streaming {
+		t.logSupervisor.Start(container.GetContainerID(), t.logger)
+	}
+
+	// Any failure past this point must release the container so the
+	// instance stays reusable via a fresh Start.
+	success := false
+	defer func() {
+		if success {
+			return
+		}
+		t.logSupervisor.Cancel()
+		_ = container.Terminate(context.Background())
+		t.logSupervisor.Wait()
+		t.container = nil
+	}()
 
 	host, err := container.Host(ctx)
 	if err != nil {
@@ -187,6 +221,7 @@ func (t *Postgres) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Pr
 	}
 	t.port = port.Port()
 
+	success = true
 	return testrig.Properties{
 		t.hostPropName:     t.host,
 		t.portPropName:     t.port,
@@ -205,7 +240,9 @@ func (t *Postgres) Stop(ctx context.Context) error {
 		return nil
 	}
 	t.logger.Info("🛑 Stopping Postgres service", "name", t.name)
+	t.logSupervisor.Cancel()
 	err := t.container.Terminate(ctx)
+	t.logSupervisor.Wait()
 	t.container = nil
 	t.host = ""
 	t.port = ""
