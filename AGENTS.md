@@ -30,6 +30,10 @@ Welcome! This repository (**testrig**) is a Go library for orchestrating multi-s
 * **Defensive Encapsulation**: 
   * Design defensively when openness is not a feature.
   * Keep internal components, utility functions, and implementation details private/unexported or within `internal/` packages unless they are explicitly part of the public API.
+* **Package Boundaries & Layout Invariants**:
+  * All core public interface contracts (e.g., `api.Service`, `api.EnvHandle`, `api.LifecycleHook`, `api.Properties`) and test mock helpers (like `api.StubEnvHandle`) must reside in the `api/` package. The `api/` package must remain free of dependencies on the root package to prevent circular imports.
+  * The root `testrig` package is responsible for the engine orchestration (like `Env`, `Stages`, etc.).
+  * Pre-built services must implement `api.Service` and live in their own dedicated modules under the `/services/` directory.
 
 ---
 
@@ -51,9 +55,10 @@ The repository is structured as a Go monorepo with multiple independently versio
 
 ```
 .                             github.com/sha1n/testrig            (engine; stdlib + golang.org/x/sync only)
-├── oidc/                     github.com/sha1n/testrig/oidc       (OAuth/OIDC issuer service)
-├── postgres/                 github.com/sha1n/testrig/postgres   (PostgreSQL testcontainer service)
-├── wiremock/                 github.com/sha1n/testrig/wiremock   (WireMock testcontainer service)
+├── dockerlog/                github.com/sha1n/testrig/dockerlog  (container log streaming helper)
+├── services/oidc/            github.com/sha1n/testrig/services/oidc (OAuth/OIDC issuer service)
+├── services/postgres/        github.com/sha1n/testrig/services/postgres (PostgreSQL testcontainer service)
+├── services/wiremock/        github.com/sha1n/testrig/services/wiremock (WireMock testcontainer service)
 ├── examples/                 github.com/sha1n/testrig/examples   (internal demo apps; not published)
 ├── tools/                    github.com/sha1n/testrig/tools      (pinned developer tools; not published)
 └── go.work                   Ties all modules together for local development
@@ -69,3 +74,18 @@ Use the provided `Makefile` targets to build, lint, and test across the workspac
 * `make build-examples`: Compiles example application binaries into `bin/`.
 * `make go-get`: Synchronizes workspace dependencies.
 * `make tidy`: Runs `go mod tidy` across all modules.
+
+---
+
+## 6. Architecture Decisions & Change Tracking
+
+* **Architecture Decision Records (ADRs)**: Every major architectural change, API signature modification, package layout restructuring, or design decision must be documented as a Decision Record in the `docs/decisions/` directory.
+* **File Naming**: Save records using the format `docs/decisions/YYYY-MM-DD-<short-topic-name>.md`.
+* **Content Template**: Each ADR must include:
+  * **Title**: Descriptive title of the decision.
+  * **Status**: `Proposed` | `Accepted` | `Superseded`. If a later decision overrides this one, update the old file's status to `Superseded` and link to the new file.
+  * **Context**: The background, problem, or constraints driving the change.
+  * **Decision**: The chosen implementation, design, or layout.
+  * **Consequences**: The impact on the codebase, external clients, or downstream development (both positive and negative).
+* **AI Agent Responsibility**: When implementing tasks, agents must check if their work introduces a design decision. If so, they must propose and write the corresponding ADR as part of their implementation plan.
+
