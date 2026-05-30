@@ -73,10 +73,10 @@ jobs:
       matrix:
         module:
           - .
-          - pkg/dockerlog
-          - oidc
-          - postgres
-          - wiremock
+          - dockerlog
+          - services/oidc
+          - services/postgres
+          - services/wiremock
           - examples
     steps:
       - name: Checkout
@@ -131,10 +131,10 @@ jobs:
       matrix:
         module:
           - .
-          - pkg/dockerlog
-          - oidc
-          - postgres
-          - wiremock
+          - dockerlog
+          - services/oidc
+          - services/postgres
+          - services/wiremock
           - examples
     steps:
       - name: Checkout

@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wiremock/go-wiremock"
 
-	"github.com/sha1n/testrig/oidc"
+	"github.com/sha1n/testrig/services/oidc"
 )
 
 // Harness bundles the runtime state each app's server_test.go needs to drive

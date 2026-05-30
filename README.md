@@ -19,9 +19,9 @@ Add only what you need:
 go get github.com/sha1n/testrig@v0.0.0-prototype.1
 
 # Pre-built services (each pulls its own deps; pick what you use):
-go get github.com/sha1n/testrig/postgres@v0.0.0-prototype.1
-go get github.com/sha1n/testrig/wiremock@v0.0.0-prototype.1
-go get github.com/sha1n/testrig/oidc@v0.0.0-prototype.1
+go get github.com/sha1n/testrig/services/postgres@v0.0.0-prototype.1
+go get github.com/sha1n/testrig/services/wiremock@v0.0.0-prototype.1
+go get github.com/sha1n/testrig/services/oidc@v0.0.0-prototype.1
 ```
 
 While the API is still iterating, the only published tags are
@@ -52,7 +52,7 @@ import (
     "testing"
 
     "github.com/sha1n/testrig"
-    "github.com/sha1n/testrig/postgres"
+    "github.com/sha1n/testrig/services/postgres"
     "github.com/stretchr/testify/require"
 )
 
@@ -113,9 +113,9 @@ reference, and a "Gaps and workarounds" section.
 
 | Service | Import | Notes |
 |---|---|---|
-| [PostgreSQL](postgres/README.md) | `github.com/sha1n/testrig/postgres` | testcontainers-backed; exposes `DSN()` and `DB(ctx)` once started; all property keys customizable. |
-| [WireMock](wiremock/README.md) | `github.com/sha1n/testrig/wiremock` | testcontainers-backed; exposes `URL()` and `Client()`; URL property key customizable. |
-| [OIDC](oidc/README.md) | `github.com/sha1n/testrig/oidc` | non-dockerized, Auth0-style OIDC issuer; supports `authorization_code` (with PKCE S256), `client_credentials`, and `refresh_token` grants; serves discovery, JWKS, `/authorize`, `/token`, `/userinfo`. |
+| [PostgreSQL](services/postgres/README.md) | `github.com/sha1n/testrig/services/postgres` | testcontainers-backed; exposes `DSN()` and `DB(ctx)` once started; all property keys customizable. |
+| [WireMock](services/wiremock/README.md) | `github.com/sha1n/testrig/services/wiremock` | testcontainers-backed; exposes `URL()` and `Client()`; URL property key customizable. |
+| [OIDC](services/oidc/README.md) | `github.com/sha1n/testrig/services/oidc` | non-dockerized, Auth0-style OIDC issuer; supports `authorization_code` (with PKCE S256), `client_credentials`, and `refresh_token` grants; serves discovery, JWKS, `/authorize`, `/token`, `/userinfo`. |
 
 ## Examples
 
@@ -127,11 +127,11 @@ libraries. Each is a small, well-structured Go server with:
 - `testenv/` — testrig wiring used by both `main` and the tests
 - `server/server_test.go` — integration tests sharing one env via `TestMain`
 
-The HTTP server itself and the custom schema-seed `testrig.Service` are
+The HTTP server itself and the custom schema-seed `api.Service` are
 shared between the two examples in `examples/internal/sampleapp` and
 `examples/internal/seed` — they have no config-library opinion. The seed
 package is the canonical demo of how to write your own
-**non-dockerized `testrig.Service`** and order it after a dependency via
+**non-dockerized `api.Service`** and order it after a dependency via
 `WithStages`.
 
 | Example | Config library |
@@ -152,9 +152,9 @@ actually use.
 
 ```
 .                              github.com/sha1n/testrig            (engine; stdlib + golang.org/x/sync)
-oidc/                 github.com/sha1n/testrig/oidc
-postgres/             github.com/sha1n/testrig/postgres
-wiremock/             github.com/sha1n/testrig/wiremock
+services/oidc/                 github.com/sha1n/testrig/services/oidc
+services/postgres/             github.com/sha1n/testrig/services/postgres
+services/wiremock/             github.com/sha1n/testrig/services/wiremock
 examples/                      github.com/sha1n/testrig/examples   (not published)
 tools/                         github.com/sha1n/testrig/tools      (not published; pins golangci-lint)
 go.work                        ties all of the above together for local development
@@ -176,9 +176,9 @@ tag scheme:
 | Module | Tag prefix | Example |
 |---|---|---|
 | root | (none) | `v0.1.0` |
-| `oidc` | `oidc/` | `oidc/v0.1.0` |
-| `postgres` | `postgres/` | `postgres/v0.1.0` |
-| `wiremock` | `wiremock/` | `wiremock/v0.1.0` |
+| `services/oidc` | `services/oidc/` | `services/oidc/v0.1.0` |
+| `services/postgres` | `services/postgres/` | `services/postgres/v0.1.0` |
+| `services/wiremock` | `services/wiremock/` | `services/wiremock/v0.1.0` |
 
 Release order: tag the engine first, then bump each sub-module's
 `require github.com/sha1n/testrig` to the engine's new version, commit,

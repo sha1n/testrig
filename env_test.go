@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sha1n/testrig"
+	"github.com/sha1n/testrig/api"
 )
 
 // --- Mocks ---
@@ -23,15 +24,15 @@ type MockService struct {
 	stopErr       error
 	startDelay    time.Duration
 	stopDelay     time.Duration
-	properties    testrig.Properties
+	properties    api.Properties
 	onStart       func()
-	onStartHandle func(env testrig.EnvHandle)
+	onStartHandle func(env api.EnvHandle)
 	onStop        func()
 }
 
 func (m *MockService) Name() string { return m.name }
 
-func (m *MockService) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Properties, error) {
+func (m *MockService) Start(ctx context.Context, env api.EnvHandle) (api.Properties, error) {
 	if m.startDelay > 0 {
 		select {
 		case <-time.After(m.startDelay):
@@ -66,18 +67,18 @@ func (m *MockService) Stop(ctx context.Context) error {
 }
 
 type MockLifecycleHook struct {
-	afterStart func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error
-	afterStop  func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error
+	afterStart func(ctx context.Context, props api.Properties, logger *slog.Logger) error
+	afterStop  func(ctx context.Context, props api.Properties, logger *slog.Logger) error
 }
 
-func (m *MockLifecycleHook) AfterStart(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+func (m *MockLifecycleHook) AfterStart(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 	if m.afterStart != nil {
 		return m.afterStart(ctx, props, logger)
 	}
 	return nil
 }
 
-func (m *MockLifecycleHook) AfterStop(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+func (m *MockLifecycleHook) AfterStop(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 	if m.afterStop != nil {
 		return m.afterStop(ctx, props, logger)
 	}
@@ -87,8 +88,8 @@ func (m *MockLifecycleHook) AfterStop(ctx context.Context, props testrig.Propert
 // --- Tests ---
 
 func TestEnv_Start_Success(t *testing.T) {
-	s1 := &MockService{name: "svc1", properties: testrig.Properties{"k1": "v1"}}
-	s2 := &MockService{name: "svc2", properties: testrig.Properties{"k2": "v2"}}
+	s1 := &MockService{name: "svc1", properties: api.Properties{"k1": "v1"}}
+	s2 := &MockService{name: "svc2", properties: api.Properties{"k2": "v2"}}
 
 	env := testrig.New("test").With(s1, s2)
 
@@ -106,8 +107,8 @@ func TestEnv_Start_Success(t *testing.T) {
 func TestEnv_Start_ReturnsPropertiesOnSuccess(t *testing.T) {
 	// Start's first return must be a non-nil snapshot containing every
 	// property published by every successfully-started service.
-	s1 := &MockService{name: "svc1", properties: testrig.Properties{"k1": "v1"}}
-	s2 := &MockService{name: "svc2", properties: testrig.Properties{"k2": "v2"}}
+	s1 := &MockService{name: "svc1", properties: api.Properties{"k1": "v1"}}
+	s2 := &MockService{name: "svc2", properties: api.Properties{"k2": "v2"}}
 
 	env := testrig.New("test").With(s1, s2)
 
@@ -131,7 +132,7 @@ func TestEnv_Start_ReturnsPropertiesOnSuccess(t *testing.T) {
 func TestEnv_Start_ReturnedPropertiesIsSnapshot(t *testing.T) {
 	// Mutating the map returned by Start must not affect env.Properties()
 	// nor leak into a subsequent Start after a Stop.
-	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "v"}}
+	svc := &MockService{name: "svc", properties: api.Properties{"k": "v"}}
 	env := testrig.New("test").With(svc)
 
 	props, err := env.Start(context.Background())
@@ -171,7 +172,7 @@ func TestEnv_Start_ReturnedPropertiesIsSnapshot(t *testing.T) {
 
 func TestEnv_Start_ReturnsNilPropertiesOnServiceFailure(t *testing.T) {
 	// When any service's Start fails, Start must return (nil, err).
-	s1 := &MockService{name: "svc1", properties: testrig.Properties{"k": "v"}}
+	s1 := &MockService{name: "svc1", properties: api.Properties{"k": "v"}}
 	s2 := &MockService{name: "svc2", startErr: errors.New("boom")}
 
 	env := testrig.New("test").With(s1, s2)
@@ -190,14 +191,14 @@ func TestEnv_Start_ReturnsNilPropertiesOnHookFailure(t *testing.T) {
 	// (nil, err) even though the services themselves started cleanly.
 	// Rollback is also expected to run; assert via the AfterStop hook
 	// having been invoked.
-	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "v"}}
+	svc := &MockService{name: "svc", properties: api.Properties{"k": "v"}}
 
 	var afterStopCalled bool
 	hook := &MockLifecycleHook{
-		afterStart: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+		afterStart: func(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 			return errors.New("hook-fail")
 		},
-		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+		afterStop: func(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 			afterStopCalled = true
 			return nil
 		},
@@ -220,12 +221,12 @@ func TestEnv_Start_ReturnsNilPropertiesOnHookFailure(t *testing.T) {
 func TestEnv_Start_ReturnedSnapshotMatchesHookSnapshot(t *testing.T) {
 	// The Properties returned by Start must contain the same keys and
 	// values as the snapshot the AfterStart hook received.
-	s1 := &MockService{name: "svc1", properties: testrig.Properties{"a": "1"}}
-	s2 := &MockService{name: "svc2", properties: testrig.Properties{"b": "2"}}
+	s1 := &MockService{name: "svc1", properties: api.Properties{"a": "1"}}
+	s2 := &MockService{name: "svc2", properties: api.Properties{"b": "2"}}
 
-	var hookSnapshot testrig.Properties
+	var hookSnapshot api.Properties
 	hook := &MockLifecycleHook{
-		afterStart: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+		afterStart: func(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 			hookSnapshot = props
 			return nil
 		},
@@ -452,18 +453,18 @@ func awaitAll(t *testing.T, hookName string, n int, entered <-chan string) {
 }
 
 func TestEnv_WithLifecycleHook_Success(t *testing.T) {
-	s1 := &MockService{name: "svc1", properties: testrig.Properties{"foo": "bar"}}
+	s1 := &MockService{name: "svc1", properties: api.Properties{"foo": "bar"}}
 
 	var startCalled, stopCalled bool
 	pm := &MockLifecycleHook{
-		afterStart: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+		afterStart: func(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 			startCalled = true
 			if props["foo"] != "bar" {
 				t.Errorf("Expected foo=bar, got %s", props["foo"])
 			}
 			return nil
 		},
-		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+		afterStop: func(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 			stopCalled = true
 			if props["foo"] != "bar" {
 				t.Errorf("Expected foo=bar in AfterStop, got %s", props["foo"])
@@ -493,10 +494,10 @@ func TestEnv_WithLifecycleHook_AfterStartError(t *testing.T) {
 
 	var stopCalled bool
 	pm := &MockLifecycleHook{
-		afterStart: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+		afterStart: func(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 			return errors.New("start-fail")
 		},
-		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+		afterStop: func(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 			stopCalled = true
 			return nil
 		},
@@ -520,7 +521,7 @@ func TestEnv_WithLifecycleHook_AfterStopError(t *testing.T) {
 	s1 := &MockService{name: "svc1"}
 
 	pm := &MockLifecycleHook{
-		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+		afterStop: func(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 			return errors.New("stop-fail")
 		},
 	}
@@ -562,7 +563,7 @@ type loggerCapturingService struct {
 	capturedLogger *slog.Logger
 }
 
-func (s *loggerCapturingService) Start(ctx context.Context, env testrig.EnvHandle) (testrig.Properties, error) {
+func (s *loggerCapturingService) Start(ctx context.Context, env api.EnvHandle) (api.Properties, error) {
 	s.capturedLogger = env.Logger()
 	return nil, nil
 }
@@ -587,7 +588,7 @@ func TestEnv_Properties_EmptyOnIdleEnv(t *testing.T) {
 func TestEnv_Properties_EmptyAfterStop(t *testing.T) {
 	// Once the env stops, Properties() must return empty — the runState is
 	// released so stale properties cannot leak to callers after Stop.
-	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "v"}}
+	svc := &MockService{name: "svc", properties: api.Properties{"k": "v"}}
 	env := testrig.New("test").With(svc)
 
 	if _, err := env.Start(context.Background()); err != nil {
@@ -608,7 +609,7 @@ func TestEnv_Properties_EmptyAfterStop(t *testing.T) {
 func TestEnv_Restart_PropertiesReflectFreshRun(t *testing.T) {
 	// Same Env instance, two Start/Stop cycles. The second run must not see
 	// stale properties from the first — the runState is reset on each Start.
-	svc := &MockService{name: "svc", properties: testrig.Properties{"k": "first"}}
+	svc := &MockService{name: "svc", properties: api.Properties{"k": "first"}}
 	env := testrig.New("test").With(svc)
 
 	if _, err := env.Start(context.Background()); err != nil {
@@ -622,7 +623,7 @@ func TestEnv_Restart_PropertiesReflectFreshRun(t *testing.T) {
 	}
 
 	// Mutate the service so the second run publishes a different value.
-	svc.properties = testrig.Properties{"k": "second"}
+	svc.properties = api.Properties{"k": "second"}
 
 	if _, err := env.Start(context.Background()); err != nil {
 		t.Fatalf("second Start failed: %v", err)
@@ -640,10 +641,10 @@ func TestEnv_Stop_MultipleHooksError(t *testing.T) {
 	h1Err := errors.New("err1")
 	h2Err := errors.New("err2")
 	h1 := &MockLifecycleHook{
-		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error { return h1Err },
+		afterStop: func(ctx context.Context, props api.Properties, logger *slog.Logger) error { return h1Err },
 	}
 	h2 := &MockLifecycleHook{
-		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error { return h2Err },
+		afterStop: func(ctx context.Context, props api.Properties, logger *slog.Logger) error { return h2Err },
 	}
 
 	env := testrig.New("test").With(s1).WithLifecycleHooks(h1, h2).WithLogger(logger)
@@ -666,7 +667,7 @@ func TestEnv_Stop_ConcurrentCallsAreIdempotent(t *testing.T) {
 	var stopCount, hookStopCount int32
 	svc := &MockService{name: "svc1", onStop: func() { atomic.AddInt32(&stopCount, 1) }}
 	hook := &MockLifecycleHook{
-		afterStop: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+		afterStop: func(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 			atomic.AddInt32(&hookStopCount, 1)
 			return nil
 		},
@@ -957,7 +958,7 @@ func TestEnvHandle_NameAvailableToService(t *testing.T) {
 	var captured string
 	svc := &MockService{
 		name: "svc",
-		onStartHandle: func(env testrig.EnvHandle) {
+		onStartHandle: func(env api.EnvHandle) {
 			captured = env.Name()
 		},
 	}
@@ -979,7 +980,7 @@ func TestEnvHandle_LoggerIsServiceScoped(t *testing.T) {
 
 	svc := &MockService{
 		name: "scoped-svc",
-		onStartHandle: func(env testrig.EnvHandle) {
+		onStartHandle: func(env api.EnvHandle) {
 			env.Logger().Info("hello")
 		},
 	}
@@ -997,10 +998,10 @@ func TestEnvHandle_LoggerIsServiceScoped(t *testing.T) {
 }
 
 func TestEnvHandle_PropertiesEmptyAtFirstStage(t *testing.T) {
-	var captured testrig.Properties
+	var captured api.Properties
 	svc := &MockService{
 		name: "svc",
-		onStartHandle: func(env testrig.EnvHandle) {
+		onStartHandle: func(env api.EnvHandle) {
 			captured = env.Properties()
 		},
 	}
@@ -1022,12 +1023,12 @@ func TestEnvHandle_PropertiesEmptyAtFirstStage(t *testing.T) {
 func TestEnvHandle_PropertiesVisibility_LaterStageSeesEarlierStage(t *testing.T) {
 	stage1 := &MockService{
 		name:       "stage1",
-		properties: testrig.Properties{"stage1.key": "stage1.value"},
+		properties: api.Properties{"stage1.key": "stage1.value"},
 	}
-	var captured testrig.Properties
+	var captured api.Properties
 	stage2 := &MockService{
 		name: "stage2",
-		onStartHandle: func(env testrig.EnvHandle) {
+		onStartHandle: func(env api.EnvHandle) {
 			captured = env.Properties()
 		},
 	}
@@ -1046,11 +1047,11 @@ func TestEnvHandle_PropertiesVisibility_LaterStageSeesEarlierStage(t *testing.T)
 func TestEnvHandle_PropertiesIsSnapshot_MutationDoesNotLeak(t *testing.T) {
 	stage1 := &MockService{
 		name:       "stage1",
-		properties: testrig.Properties{"k": "v"},
+		properties: api.Properties{"k": "v"},
 	}
 	stage2 := &MockService{
 		name: "stage2",
-		onStartHandle: func(env testrig.EnvHandle) {
+		onStartHandle: func(env api.EnvHandle) {
 			props := env.Properties()
 			props["k"] = "MUTATED"
 			props["intruder"] = "x"
@@ -1069,79 +1070,5 @@ func TestEnvHandle_PropertiesIsSnapshot_MutationDoesNotLeak(t *testing.T) {
 	}
 	if _, ok := envProps["intruder"]; ok {
 		t.Errorf("env's properties contain intruder key from snapshot mutation: %v", envProps)
-	}
-}
-
-// --- StubEnvHandle tests ---
-
-func TestStubEnvHandle_ReturnsProvidedValues(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	props := testrig.Properties{"a": "1"}
-
-	h := testrig.StubEnvHandle("env-name", logger, props)
-
-	if h.Name() != "env-name" {
-		t.Errorf("Name() = %q, want %q", h.Name(), "env-name")
-	}
-	if h.Logger() != logger {
-		t.Errorf("Logger() did not return the provided logger")
-	}
-	got := h.Properties()
-	if got["a"] != "1" {
-		t.Errorf("Properties() = %v, want a=1", got)
-	}
-}
-
-func TestStubEnvHandle_NilLoggerFallsBackToDefault(t *testing.T) {
-	h := testrig.StubEnvHandle("env", nil, nil)
-	if h.Logger() == nil {
-		t.Fatal("Logger() should fall back to a non-nil default")
-	}
-	if h.Logger() != slog.Default() {
-		t.Error("Logger() should fall back to slog.Default()")
-	}
-}
-
-func TestStubEnvHandle_NilPropertiesYieldsEmpty(t *testing.T) {
-	h := testrig.StubEnvHandle("env", nil, nil)
-	got := h.Properties()
-	if got == nil {
-		t.Fatal("Properties() should not be nil")
-	}
-	if len(got) != 0 {
-		t.Errorf("Properties() should be empty, got %v", got)
-	}
-}
-
-func TestStubEnvHandle_PropertiesIsSnapshot(t *testing.T) {
-	original := testrig.Properties{"k": "v"}
-	h := testrig.StubEnvHandle("env", nil, original)
-
-	got := h.Properties()
-	got["k"] = "MUTATED"
-	got["intruder"] = "x"
-
-	again := h.Properties()
-	if again["k"] != "v" {
-		t.Errorf("snapshot semantics broken: subsequent read sees %q", again["k"])
-	}
-	if _, ok := again["intruder"]; ok {
-		t.Errorf("snapshot semantics broken: subsequent read contains intruder key")
-	}
-}
-
-func TestStubEnvHandle_InputMutationDoesNotLeak(t *testing.T) {
-	input := testrig.Properties{"k": "v"}
-	h := testrig.StubEnvHandle("env", nil, input)
-
-	input["k"] = "MUTATED"
-	input["intruder"] = "x"
-
-	got := h.Properties()
-	if got["k"] != "v" {
-		t.Errorf("stub leaked input mutation: got %q, want %q", got["k"], "v")
-	}
-	if _, ok := got["intruder"]; ok {
-		t.Errorf("stub leaked input mutation: intruder key present")
 	}
 }

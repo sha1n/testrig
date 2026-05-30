@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/sha1n/testrig"
+	"github.com/sha1n/testrig/api"
 )
 
 // --- Full Lifecycle ---
 
 func TestIntegration_FullLifecycle(t *testing.T) {
-	s1 := &MockService{name: "svc1", properties: testrig.Properties{"a": "1"}}
-	s2 := &MockService{name: "svc2", properties: testrig.Properties{"b": "2"}}
+	s1 := &MockService{name: "svc1", properties: api.Properties{"a": "1"}}
+	s2 := &MockService{name: "svc2", properties: api.Properties{"b": "2"}}
 
 	env := testrig.New("test").With(s1, s2)
 	props, err := env.Start(context.Background())
@@ -41,7 +42,7 @@ func TestIntegration_ParallelEnvsAreIndependent(t *testing.T) {
 
 	t.Run("env1", func(t *testing.T) {
 		t.Parallel()
-		svc := &MockService{name: "parallel-svc", properties: testrig.Properties{"x": "env1-val"}}
+		svc := &MockService{name: "parallel-svc", properties: api.Properties{"x": "env1-val"}}
 		env := testrig.New("test").With(svc)
 		props, err := env.Start(context.Background())
 		if err != nil {
@@ -56,7 +57,7 @@ func TestIntegration_ParallelEnvsAreIndependent(t *testing.T) {
 
 	t.Run("env2", func(t *testing.T) {
 		t.Parallel()
-		svc := &MockService{name: "parallel-svc", properties: testrig.Properties{"x": "env2-val"}}
+		svc := &MockService{name: "parallel-svc", properties: api.Properties{"x": "env2-val"}}
 		env := testrig.New("test").With(svc)
 		props, err := env.Start(context.Background())
 		if err != nil {
@@ -166,7 +167,7 @@ func TestIntegration_StartRetryAfterFailure(t *testing.T) {
 	}
 
 	svc.startErr = nil
-	svc.properties = testrig.Properties{"k": "v"}
+	svc.properties = api.Properties{"k": "v"}
 
 	props, err := env.Start(context.Background())
 	if err != nil {
@@ -183,8 +184,8 @@ func TestIntegration_FreshEnv_DoesNotInheritFromPriorEnv(t *testing.T) {
 	// Two independent Envs sharing a Service instance still publish properties
 	// independently — the second env's view contains exactly its own services,
 	// no leak from the first env's run.
-	svc1 := &MockService{name: "shared-svc", properties: testrig.Properties{"a": "1"}}
-	svc2 := &MockService{name: "second-only", properties: testrig.Properties{"b": "2"}}
+	svc1 := &MockService{name: "shared-svc", properties: api.Properties{"a": "1"}}
+	svc2 := &MockService{name: "second-only", properties: api.Properties{"b": "2"}}
 
 	first := testrig.New("test").With(svc1)
 	if _, err := first.Start(context.Background()); err != nil {
@@ -211,10 +212,10 @@ func TestIntegration_FreshEnv_DoesNotInheritFromPriorEnv(t *testing.T) {
 
 func TestIntegration_AfterStartHookFailure_RollsBackServices(t *testing.T) {
 	var stopped bool
-	svc := &MockService{name: "hook-fail-svc", properties: testrig.Properties{"k": "v"}, onStop: func() { stopped = true }}
+	svc := &MockService{name: "hook-fail-svc", properties: api.Properties{"k": "v"}, onStop: func() { stopped = true }}
 
 	hook := &MockLifecycleHook{
-		afterStart: func(ctx context.Context, props testrig.Properties, logger *slog.Logger) error {
+		afterStart: func(ctx context.Context, props api.Properties, logger *slog.Logger) error {
 			return errors.New("hook-fail")
 		},
 	}

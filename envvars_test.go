@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/sha1n/testrig"
+	"github.com/sha1n/testrig/api"
 )
 
 func TestSetEnvVars_PanicsOnParallelTest(t *testing.T) {
@@ -24,7 +25,7 @@ func TestSetEnvVars_PanicsOnParallelTest(t *testing.T) {
 			}
 		}()
 
-		testrig.SetEnvVars(t, testrig.Properties{"KEY": "value"})
+		testrig.SetEnvVars(t, api.Properties{"KEY": "value"})
 	})
 }
 
@@ -32,7 +33,7 @@ func TestSetEnvVars_SetsValues(t *testing.T) {
 	key := "TESTRIG_INJECT_TEST_SET"
 
 	t.Run("inner", func(t *testing.T) {
-		testrig.SetEnvVars(t, testrig.Properties{key: "injected"})
+		testrig.SetEnvVars(t, api.Properties{key: "injected"})
 
 		val, ok := os.LookupEnv(key)
 		if !ok || val != "injected" {
@@ -46,7 +47,7 @@ func TestSetEnvVars_RestoresOriginal(t *testing.T) {
 	t.Setenv(key, "original")
 
 	t.Run("inner", func(t *testing.T) {
-		testrig.SetEnvVars(t, testrig.Properties{key: "overridden"})
+		testrig.SetEnvVars(t, api.Properties{key: "overridden"})
 
 		val, _ := os.LookupEnv(key)
 		if val != "overridden" {
@@ -65,7 +66,7 @@ func TestSetEnvVars_UnsetsNewKeys(t *testing.T) {
 	key := "TESTRIG_INJECT_TEST_NEW"
 
 	t.Run("inner", func(t *testing.T) {
-		testrig.SetEnvVars(t, testrig.Properties{key: "new-value"})
+		testrig.SetEnvVars(t, api.Properties{key: "new-value"})
 
 		val, ok := os.LookupEnv(key)
 		if !ok || val != "new-value" {
@@ -80,7 +81,7 @@ func TestSetEnvVars_UnsetsNewKeys(t *testing.T) {
 }
 
 func TestSetEnvVars_EmptyProperties(t *testing.T) {
-	testrig.SetEnvVars(t, testrig.Properties{})
+	testrig.SetEnvVars(t, api.Properties{})
 }
 
 func TestSetEnvVars_NilProperties(t *testing.T) {
@@ -95,7 +96,7 @@ func TestSetEnvVars_MultipleKeys(t *testing.T) {
 	}
 
 	t.Run("inner", func(t *testing.T) {
-		testrig.SetEnvVars(t, testrig.Properties{
+		testrig.SetEnvVars(t, api.Properties{
 			keys[0]: "a",
 			keys[1]: "b",
 			keys[2]: "c",

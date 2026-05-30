@@ -2,11 +2,14 @@ package seed_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/sha1n/testrig"
+	"github.com/sha1n/testrig/api"
 	"github.com/sha1n/testrig/examples/internal/seed"
-	"github.com/sha1n/testrig/postgres"
+	"github.com/sha1n/testrig/services/postgres"
 )
 
 // TestSchemaSeed_AppliesSchema verifies the seed service runs DDL against
@@ -89,5 +92,57 @@ func TestSchemaSeed_Idempotent(t *testing.T) {
 	props := env.Properties()
 	if props["seed.applied"] != "true" {
 		t.Errorf("expected seed.applied=true after second start, got %q", props["seed.applied"])
+	}
+}
+
+// TestSchemaSeed_Start_OpenDbError verifies that if the Postgres connection
+// fails (e.g. because Postgres isn't started), Start returns an error.
+func TestSchemaSeed_Start_OpenDbError(t *testing.T) {
+	pg := postgres.New("pg-not-started")
+	s := seed.New(pg)
+
+	env := api.StubEnvHandle("test-env", slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+
+	_, err := s.Start(context.Background(), env)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+// TestSchemaSeed_Start_ExecError verifies that if the DDL execution fails,
+// Start returns an error.
+func TestSchemaSeed_Start_ExecError(t *testing.T) {
+	pg := postgres.New("pg-exec-err").WithDatabase("seed_exec_err_test")
+
+	env := testrig.New("seed-exec-err-env").
+		WithStages(testrig.NewStages(pg))
+
+	_, err := env.Start(context.Background())
+	if err != nil {
+		t.Fatalf("failed to start postgres env: %v", err)
+	}
+	defer func() { _ = env.Stop(context.Background()) }()
+
+	db, err := pg.DB(context.Background())
+	if err != nil {
+		t.Fatalf("failed to get pg DB: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	// Create a new user that doesn't have privileges to create tables in 'public' schema
+	if _, err := db.Exec(`CREATE ROLE no_priv_user WITH LOGIN PASSWORD 'password'`); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	// Change Postgres credentials to the new user so pg.DB() connects as them
+	pg.WithUsername("no_priv_user").WithPassword("password")
+
+	// Now run the seed service manually against this database
+	s := seed.New(pg)
+	stubEnv := api.StubEnvHandle("stub-env", slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+
+	_, err = s.Start(context.Background(), stubEnv)
+	if err == nil {
+		t.Fatal("expected error when seeding because of permission denied, got nil")
 	}
 }

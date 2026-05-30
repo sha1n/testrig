@@ -17,7 +17,7 @@ import (
 	"github.com/sha1n/testrig"
 	"github.com/sha1n/testrig/examples/internal/sampleapp"
 	"github.com/sha1n/testrig/examples/internal/seed"
-	"github.com/sha1n/testrig/postgres"
+	"github.com/sha1n/testrig/services/postgres"
 )
 
 // Shared across DB-dependent tests — started once in TestMain.
