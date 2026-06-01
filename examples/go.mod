@@ -7,7 +7,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/knadh/koanf/providers/confmap v1.0.0
 	github.com/knadh/koanf/providers/env v1.1.0
-	github.com/knadh/koanf/v2 v2.3.4
+	github.com/knadh/koanf/v2 v2.3.5
 	github.com/sha1n/testrig v0.0.0-alpha.2
 	github.com/sha1n/testrig/services/oidc v0.0.0-alpha.2
 	github.com/sha1n/testrig/services/postgres v0.0.0-alpha.2
