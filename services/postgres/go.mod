@@ -3,7 +3,7 @@ module github.com/sha1n/testrig/services/postgres
 go 1.25.0
 
 require (
-	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/moby/moby/api v1.54.2
 	github.com/sha1n/testrig v0.0.0-alpha.2
 	github.com/sha1n/testrig/dockerlog v0.0.0-alpha.2
