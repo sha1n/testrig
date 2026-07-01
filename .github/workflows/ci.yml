@@ -180,7 +180,7 @@ jobs:
           if [ -n "$PKGS" ]; then go test -race -coverprofile=coverage.out -coverpkg=./... ./...; else echo "No packages to test."; fi
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           use_oidc: true
           files: ${{ matrix.module }}/coverage.out
