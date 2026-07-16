@@ -13,6 +13,7 @@ import (
 
 	"github.com/sha1n/testrig/api"
 	"github.com/sha1n/testrig/services/wiremock"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // concurrentBuffer is a goroutine-safe sink for slog. The testcontainers log
@@ -75,6 +76,7 @@ func assertBufferStaysAt(t *testing.T, buf *concurrentBuffer, snapshot string, w
 }
 
 func TestWireMock_Defaults(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("test-mock")
 
 	if tk.Name() != "test-mock" {
@@ -94,6 +96,7 @@ func TestWireMock_Defaults(t *testing.T) {
 }
 
 func TestWireMock_Configured(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("custom-mock").
 		WithImage("wiremock/wiremock").
 		WithTag("3.3.1")
@@ -110,6 +113,7 @@ func TestWireMock_Configured(t *testing.T) {
 }
 
 func TestWireMock_URLPropertyName_Override(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("wm").WithURLPropertyName("MOCK_URL")
 
 	props, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil))
@@ -127,6 +131,7 @@ func TestWireMock_URLPropertyName_Override(t *testing.T) {
 }
 
 func TestWireMock_StartTwice_ReturnsError(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("twice")
 	if _, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil)); err != nil {
 		t.Fatalf("First Start failed: %v", err)
@@ -139,6 +144,7 @@ func TestWireMock_StartTwice_ReturnsError(t *testing.T) {
 }
 
 func TestWireMock_StopThenStart_Succeeds(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	// A service instance must be reusable across env restart cycles. Stop
 	// releases the container and clears service state so a subsequent Start
 	// builds a fresh one.
@@ -160,6 +166,7 @@ func TestWireMock_StopThenStart_Succeeds(t *testing.T) {
 }
 
 func TestWireMock_Stop_NoContainer(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("no-container")
 	if err := tk.Stop(context.Background()); err != nil {
 		t.Errorf("Stop without container should be no-op, got %v", err)
@@ -167,6 +174,7 @@ func TestWireMock_Stop_NoContainer(t *testing.T) {
 }
 
 func TestWireMock_URL_MatchesProperty(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("url-match")
 
 	props, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil))
@@ -186,6 +194,7 @@ func TestWireMock_URL_MatchesProperty(t *testing.T) {
 const verboseSentinel = "no-request-journal"
 
 func TestWireMock_DefaultStart_DoesNotForwardContainerOutput(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	// Without WithVerboseLogging, no LogConsumer is wired into the
 	// ContainerRequest, so no log producer ever starts — there's no async
 	// path through which container stdout could reach the testrig logger.
@@ -204,6 +213,7 @@ func TestWireMock_DefaultStart_DoesNotForwardContainerOutput(t *testing.T) {
 }
 
 func TestWireMock_VerboseLogging_ForwardsContainerOutput(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("verbose-on").WithVerboseLogging()
 	handle, buf := newCapturingHandle(t)
 
@@ -223,6 +233,7 @@ func TestWireMock_VerboseLogging_ForwardsContainerOutput(t *testing.T) {
 const bannerSentinel = "wiremock.org"
 
 func TestWireMock_VerboseLogging_SuppressesBannerByDefault(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("banner-off").WithVerboseLogging()
 	handle, buf := newCapturingHandle(t)
 
@@ -251,6 +262,7 @@ func TestWireMock_VerboseLogging_SuppressesBannerByDefault(t *testing.T) {
 // supervisor must own its own (background-derived) ctx so it can keep
 // streaming after the caller's Start ctx is cancelled.
 func TestWireMock_VerboseLogging_SurvivesStartCtxCancel(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	startCtx, cancelStart := context.WithCancel(context.Background())
 	tk := wiremock.New("ctx-cancel").WithVerboseLogging()
 	handle, buf := newCapturingHandle(t)
@@ -287,6 +299,7 @@ func TestWireMock_VerboseLogging_SurvivesStartCtxCancel(t *testing.T) {
 // Docker Desktop would cause later requests to produce no output, failing the
 // final assertions.
 func TestWireMock_VerboseLogging_SustainedMultipleRequests(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("sustained").WithVerboseLogging()
 	handle, buf := newCapturingHandle(t)
 
@@ -332,6 +345,7 @@ func TestWireMock_VerboseLogging_SustainedMultipleRequests(t *testing.T) {
 // and re-established by the next Start; without that, the second producer
 // would either not start or would be cancelled by stale state.
 func TestWireMock_VerboseLogging_RestartsCleanly(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("restart-verbose").WithVerboseLogging()
 	ctx := context.Background()
 
@@ -374,6 +388,7 @@ func TestWireMock_VerboseLogging_RestartsCleanly(t *testing.T) {
 // the buffer after Stop returns. Catches goroutine leaks and races where
 // the producer keeps forwarding for a few iterations past Stop.
 func TestWireMock_VerboseLogging_StopHaltsStreaming(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("stop-halts").WithVerboseLogging()
 	handle, buf := newCapturingHandle(t)
 	ctx := context.Background()
@@ -406,6 +421,7 @@ func TestWireMock_VerboseLogging_StopHaltsStreaming(t *testing.T) {
 }
 
 func TestWireMock_VerboseLogging_WithBanner_ShowsBanner(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("banner-on").WithVerboseLogging().WithBanner()
 	handle, buf := newCapturingHandle(t)
 
@@ -420,12 +436,14 @@ func TestWireMock_VerboseLogging_WithBanner_ShowsBanner(t *testing.T) {
 }
 
 func TestWireMock_URL_BeforeStart(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	if got := wiremock.New("url-before-start").URL(); got != "" {
 		t.Errorf("URL() before Start should return empty string; got %q", got)
 	}
 }
 
 func TestWireMock_Start_Error_LeavesServiceReusable(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("err-reuse").WithImage("non-existent-image-12345")
 	if _, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil)); err == nil {
 		t.Fatal("expected Start to fail with non-existent image")
@@ -441,6 +459,7 @@ func TestWireMock_Start_Error_LeavesServiceReusable(t *testing.T) {
 }
 
 func TestWireMock_Client_NotNil(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := wiremock.New("client-test")
 
 	if _, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil)); err != nil {
