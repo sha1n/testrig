@@ -13,9 +13,11 @@ import (
 	"github.com/sha1n/testrig/services/postgres"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 func TestPostgres_Defaults(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("test-db")
 
 	assert.Equal(t, "test-db", tk.Name())
@@ -35,6 +37,7 @@ func TestPostgres_Defaults(t *testing.T) {
 }
 
 func TestPostgres_Configured(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("custom-db").
 		WithImage("postgres").
 		WithTag("15-alpine").
@@ -58,6 +61,7 @@ func TestPostgres_Configured(t *testing.T) {
 }
 
 func TestPostgres_DSNProperty_URLEncodesSpecialChars(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("special").WithPassword("p@ss/word:1")
 
 	props, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil))
@@ -69,6 +73,7 @@ func TestPostgres_DSNProperty_URLEncodesSpecialChars(t *testing.T) {
 }
 
 func TestPostgres_PropertyNameOverrides(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("pg").
 		WithDatabase("app_db").
 		WithDSNPropertyName("DATABASE_URL").
@@ -96,6 +101,7 @@ func TestPostgres_PropertyNameOverrides(t *testing.T) {
 }
 
 func TestPostgres_StartTwice_ReturnsError(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("twice")
 	_, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil))
 	require.NoError(t, err)
@@ -106,6 +112,7 @@ func TestPostgres_StartTwice_ReturnsError(t *testing.T) {
 }
 
 func TestPostgres_StopThenStart_Succeeds(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("restart-test")
 	ctx := context.Background()
 
@@ -123,18 +130,21 @@ func TestPostgres_StopThenStart_Succeeds(t *testing.T) {
 }
 
 func TestPostgres_Start_Error(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("err-db").WithImage("non-existent-image-12345")
 	_, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil))
 	assert.Error(t, err, "Expected error for non-existent image")
 }
 
 func TestPostgres_Stop_NoContainer(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("no-container")
 	err := tk.Stop(context.Background())
 	assert.NoError(t, err, "Stop without container should be no-op")
 }
 
 func TestPostgres_DSN_MatchesProperty(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("dsn-match").WithPassword("p@ss/word:1")
 
 	props, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil))
@@ -145,6 +155,7 @@ func TestPostgres_DSN_MatchesProperty(t *testing.T) {
 }
 
 func TestPostgres_DB_PingsAndReturnsConnection(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("db-test")
 
 	_, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil))
@@ -161,6 +172,7 @@ func TestPostgres_DB_PingsAndReturnsConnection(t *testing.T) {
 }
 
 func TestPostgres_DB_PingError_PropagatesContextCancel(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("db-ping-fail")
 	_, err := tk.Start(context.Background(), api.StubEnvHandle("test", slog.Default(), nil))
 	require.NoError(t, err)
@@ -202,6 +214,7 @@ func eventually(timeout time.Duration, cond func() bool) bool {
 }
 
 func TestPostgres_LogStreaming_ForwardsContainerOutput(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	tk := postgres.New("log-streaming-test").WithLogStreaming()
 
 	buf := &syncBuffer{}

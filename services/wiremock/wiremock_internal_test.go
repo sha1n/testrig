@@ -80,6 +80,7 @@ func waitForLog(t *testing.T, buf *syncBuffer, sentinel string, timeout time.Dur
 // ─── argsForVerbose ───────────────────────────────────────────────────────────
 
 func TestArgsForVerbose(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	cases := []struct {
 		name    string
 		verbose bool
@@ -110,6 +111,7 @@ func TestArgsForVerbose(t *testing.T) {
 // signal — proving end-to-end that the restart codepath fires on the actual
 // Docker Desktop symptom this feature exists to handle.
 func TestStreamLogs_Integration_RestartsOnCleanEOF(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	wm := New("sv-restart").WithVerboseLogging()
 	ctx := context.Background()
 	logger, buf := newCapturingLogger()
@@ -195,6 +197,7 @@ func (f *fakeContainer) Terminate(ctx context.Context, _ ...testcontainers.Termi
 // returns an error, Start returns an error and the cleanup defer terminates the
 // container and resets t.container to nil so the service is reusable.
 func TestStart_Unit_HostFailure_CleansUp(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	terminated := false
 	fake := &fakeContainer{
 		t:           t,
@@ -219,6 +222,7 @@ func TestStart_Unit_HostFailure_CleansUp(t *testing.T) {
 // TestStart_Unit_MappedPortFailure_CleansUp verifies the same cleanup behaviour
 // when MappedPort() fails after Host() succeeds.
 func TestStart_Unit_MappedPortFailure_CleansUp(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	terminated := false
 	fake := &fakeContainer{
 		t:      t,
@@ -247,6 +251,7 @@ func TestStart_Unit_MappedPortFailure_CleansUp(t *testing.T) {
 // verbose logging is enabled and Host() fails, the cleanup defer cancels and
 // drains the streaming goroutine — preventing a goroutine leak.
 func TestStart_Unit_VerboseHostFailure_CancelsLogGoroutine(t *testing.T) {
+	testcontainers.SkipIfProviderIsNotHealthy(t)
 	fake := &fakeContainer{
 		t:                t,
 		getContainerIDFn: func() string { return "fake-cid" },
