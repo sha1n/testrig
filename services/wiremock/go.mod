@@ -3,7 +3,7 @@ module github.com/sha1n/testrig/services/wiremock
 go 1.25.0
 
 require (
-	github.com/moby/moby/api v1.54.2
+	github.com/moby/moby/api v1.55.0
 	github.com/sha1n/testrig v0.0.0-alpha.2
 	github.com/sha1n/testrig/dockerlog v0.0.0-alpha.2
 	github.com/stretchr/testify v1.11.1
